@@ -23,7 +23,7 @@ tags: [systems]
 ```
 
 **level** — 1 (core) to 5 (artifact)
-**sign** — any symbol for graph visualization
+**sign** — any symbol for visualization
 
 ## First steps
 
