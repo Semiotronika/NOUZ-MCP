@@ -1,0 +1,50 @@
+# =============================================================================
+# Nouz MCP Server Configuration
+# =============================================================================
+
+# Mode: luca | prizma | sloi
+# - luca: Graph-based, no semantic classification
+# - prizma: Graph-based with semantic classification and core_mix
+# - sloi: Strict 5-level hierarchy with semantic classification
+mode: prizma
+
+# PRIZMA mode: auto-select thinking style based on keywords
+prizma_modes:
+  SystemThinking:
+    keywords: ["feedback", "loop", "emergence", "holism", "mental model", "leverage point"]
+    signs: ["Ψ"]
+  Structure:
+    keywords: ["taxonomy", "hierarchy", "DAG", "logic", "classification"]
+    signs: ["Δ"]
+  Computing:
+    keywords: ["code", "algorithm", "software", "neural network", "LLM", "agent"]
+    signs: ["Σ"]
+
+# Core etalons for semantic classification
+etalons:
+  - sign: "Ψ"
+    name: SystemThinking
+    text: "feedback loop emergence holism mental model"
+  - sign: "Δ"
+    name: Structure
+    text: "taxonomy hierarchy logic classification DAG"
+  - sign: "Σ"
+    name: Computing
+    text: "code algorithm software neural network LLM"
+
+levels:
+  core: 1
+  pattern: 2
+  module: 3
+  quant: 4
+  artifact: 5
+
+thresholds:
+  sign_spread: 0.05          # не требует настройки
+  confident_cosine: 0.75     # не требует настройки
+  pattern_second_sign_threshold: 30.0  # не требует настройки
+  # semantic_bridge_threshold: порог для семантических мостов между разными знаками
+  # Начни с 0.55, потом регулируй под свой стиль мышления:
+  # - > 0.6: чёткое разделение (меньше мостов, строже классификация)
+  # - < 0.5: больше перекрытий (эмерджентность, неожиданные связи)
+  semantic_bridge_threshold: 0.55
