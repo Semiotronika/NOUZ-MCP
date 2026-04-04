@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "NOUZ",
+  "name_for_machine": "nouz",
+  "description": "MCP Server for local knowledge management. Works with Obsidian vaults, providing semantic search via embeddings, 5-level knowledge hierarchy, and graph-based link analysis.",
+  "icon": "https://raw.githubusercontent.com/KVANTRA-dev/NOUZ-MCP/main/icon_nouz.svg",
+  "homepage": "https://github.com/KVANTRA-dev/NOUZ-MCP",
+  "repository": "https://github.com/KVANTRA-dev/NOUZ-MCP",
+  "keywords": ["mcp", "obsidian", "knowledge-management", "semantic-search", "embeddings", "knowledge-graph", "local", "markdown", "note-taking"],
+  "installations": [
+    {
+      "type": "git",
+      "url": "https://github.com/KVANTRA-dev/NOUZ-MCP"
+    }
+  ],
+  "categories": ["Note Taking", "Knowledge & Memory", "File Systems", "Vector Databases", "RAG Systems"],
+  "platforms": ["Linux", "Apple", "Windows"]
+}
