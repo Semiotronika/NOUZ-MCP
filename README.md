@@ -1,5 +1,6 @@
 # NOUZ — MCP Server for local knowledge management
 [![NOUZ-MCP MCP server](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP/badges/score.svg)](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP)
+
 **v2.1.0**
 
 ## Install
