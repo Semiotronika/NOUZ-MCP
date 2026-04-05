@@ -42,19 +42,19 @@ DEFAULT_CONFIG = {
             "mode": "prizma",
             "etalons": [
                 {
-                    "sign": "Ψ",
-                    "name": "SystemThinking",
-                    "text": "feedback loop emergence holism mental model"
+                    "sign": "M",
+                    "name": "Logic",
+                    "text": "syllogism дедукция axiomatic аксиома proof теорема logical argument философское reasoning рассуждение fallacy заблуждение"
                 },
                 {
-                    "sign": "Δ",
-                    "name": "Structure",
-                    "text": "taxonomy hierarchy logic classification DAG"
+                    "sign": "C",
+                    "name": "Astrophysics",
+                    "text": "supernova сверхновая exoplanet экзопланета dark matter тёмная материя quasar квазар black hole чёрная дыра stellar звёздный"
                 },
                 {
-                    "sign": "Σ",
-                    "name": "Computing",
-                    "text": "code algorithm software neural network LLM"
+                    "sign": "P",
+                    "name": "Biology",
+                    "text": "DNA ДНК genome геном CRISPR gene editing белок protein фермент metabolism метаболизм cell клетка neuron нейрон"
                 }
             ]
         }
