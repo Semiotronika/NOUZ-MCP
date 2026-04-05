@@ -82,3 +82,4 @@ tags: [systems]
 [![NOUZ-MCP MCP server](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP/badges/card.svg)](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP)
 ---
 *Copyright (c) 2026 KVANTRA. MIT License.*
+https://kvantra-dev.github.io/nouz
