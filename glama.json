@@ -1,6 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "maintainers": ["KVANTRA-dev"]
+  "maintainers": ["KVANTRA-dev"],
   "schema_version": "v1",
   "name_for_human": "NOUZ",
   "name_for_machine": "nouz",
