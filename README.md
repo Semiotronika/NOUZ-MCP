@@ -3,82 +3,83 @@
 
 [![NOUZ-MCP MCP server](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP/badges/score.svg)](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP)
 
-## Install
+Unified MCP server for semantic knowledge management in Obsidian. Works with local embedding models.
+
+## Quick Start
 
 ```bash
+git clone https://github.com/KVANTRA-dev/NOUZ-MCP
+cd NOUZ-MCP
 pip install -r requirements.txt
-```
 
-## Run
+export OBSIDIAN_ROOT=./vault
+export EMBED_PROVIDER=ollama  # openai, gigachat, ollama
+export EMBED_API_URL=http://127.0.0.1:1234/v1
 
-```bash
-export OBSIDIAN_ROOT=./obsidian
-export EMBED_PROVIDER=ollama  # openai, gigachat
 python server.py
 ```
 
-## Config
-
-Edit `config.yaml`:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `mode` | string | luca / prizma / sloi |
-| `levels` | dict | core=1, pattern=2, module=3, quant=4, artifact=5 |
-| `thresholds.semantic_bridge_threshold` | float | 0.55 default |
-| `etalons` | list | Core signs with text for embedding |
-| `prizma_modes` | dict | Keywords per thinking style |
-
-## Tools
-
-### Basic
-- `read_file(path)` — read note with YAML frontmatter
-- `write_file(path, content, metadata)` — write note with YAML
-- `list_files(level, sign, tags, subfolder)` — filter files
-- `index_all(with_embeddings)` — index to DB
-- `embed(text)` — get embedding
-
-### Navigation
-- `get_parents(path)` — files linking to this file
-- `get_children(path)` — files this file links to
-
-### Semantics (prizma / sloi)
-- `calibrate_cores()` — recalculate etalon embeddings
-- `recalc_signs()` — recalculate sign_auto
-- `recalc_core_mix()` — recalculate core_mix
-- `suggest_metadata(path)` — suggest level/sign
-- `suggest_parents(path)` — suggest links by embeddings
-- `format_entity_compact(path)` — entity formula
-
 ## Modes
 
-| Mode | Level Strict | Semantics | Description |
-|------|--------------|-----------|-------------|
-| luca | ❌ | ❌ | Simple graph |
-| prizma | ❌ | ✅ | Semantic bridges + core_mix |
-| sloi | ✅ | ✅ | Strict 5-level hierarchy |
+| Mode | Description |
+|------|-------------|
+| **luca** | Graph-based, level for display only |
+| **prizma** | Graph-based with semantic classification |
+| **sloi** | Strict 5-level hierarchy |
 
-## File Format
+Set mode in config.yaml or via `MODE` env var.
+
+## Minimal Setup
+
+You can start with just YAML frontmatter in your notes:
 
 ```yaml
 ---
 level: 2
-sign: Ψ
-tags: [systems]
+type: pattern
 ---
-# Content here
+# Your note
 ```
 
-## Env Vars
+## Semantic Etalons (Optional)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OBSIDIAN_ROOT` | ./obsidian | Vault path |
-| `EMBED_PROVIDER` | openai | openai / gigachat / ollama |
-| `EMBED_API_URL` | http://127.0.0.1:1234/v1 | API endpoint |
-| `EMBED_MODEL` | — | Model name |
-| `EMBED_API_KEY` | — | API key |
+For better semantic classification (Prizma/Sloi modes), copy `config.template.yaml` to `config.yaml` and define your domains:
 
----
-*Copyright (c) 2026 KVANTRA. MIT License.*
-https://kvantra-dev.github.io/nouz
+```yaml
+etalons:
+  - sign: T
+    name: Technology
+    text: "programming software architecture infrastructure machine learning"
+  - sign: S
+    name: Science
+    text: "physics chemistry biology mathematics formal logic theorems"
+  - sign: H
+    name: Humanities
+    text: "philosophy psychology sociology history literature art culture"
+```
+
+**Recommendation:** Use 3-4 distinct domains with cosine similarity < 0.55 between them for best results. See `guide.md` for details.
+
+## Tools
+
+- `read_file(path)` — Read note with YAML
+- `write_file(path, content, metadata)` — Write note
+- `list_files(level, sign, tags)` — Filter files
+- `index_all(with_embeddings)` — Index to DB
+- `embed(text)` — Get embedding
+- `get_parents(path)` — Files linking to this file
+- `get_children(path)` — Files this file links to
+
+### Prizma/Sloi only
+- `calibrate_cores()` — Recalculate etalon embeddings
+- `recalc_signs()` — Recalculate auto-signatures
+- `recalc_core_mix()` — Recalculate core_mix
+- `suggest_metadata(path)` — Suggest level/sign
+- `suggest_parents(path)` — Suggest links by embeddings
+
+## Links
+
+- [Guide](https://github.com/KVANTRA-dev/NOUZ-MCP/blob/main/guide.md)
+- [KVANTRA](https://kvantra-dev.github.io/)
+
+MIT License © 2026 KVANTRA
