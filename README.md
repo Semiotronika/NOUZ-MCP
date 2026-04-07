@@ -166,3 +166,5 @@ MIT License © 2026 KVANTRA
 
 ### v2.1.0
 - Initial public release
+
+<!-- mcp-name: io.github.KVANTRA-dev/NOUZ-MCP -->
