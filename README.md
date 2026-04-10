@@ -1,4 +1,4 @@
-<img width="1000" height="120" alt="banner 1" src="https://github.com/user-attachments/assets/83b4e93c-6432-4345-94f4-a100f2e549b7" />
+<img width="1000" height="120" alt="banner 1" src="https://github.com/user-attachments/assets/7aad8385-fdce-4c3c-8103-97656ed791db" />
 
 # Nouz — Semantic Knowledge Graph for Obsidian
 
