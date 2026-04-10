@@ -383,3 +383,4 @@ MIT License © 2026 KVANTRA
 ---
 
 *Cosines are calculated, syntax changes, semantics remains.*
+<!-- mcp-name: io.github.KVANTRA-dev/nouz -->
