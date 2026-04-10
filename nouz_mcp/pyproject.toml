@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nouz-mcp"
-version = "2.1.1"
+version = "2.1.2"
 description = "Unified MCP Server for Obsidian - graph-based note management with semantic classification"
 readme = "README.md"
 license = {text = "MIT"}
