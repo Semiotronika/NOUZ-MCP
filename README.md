@@ -1,177 +1,78 @@
 <img width="1000" height="120" alt="banner 1" src="https://github.com/user-attachments/assets/7aad8385-fdce-4c3c-8103-97656ed791db" />
 
-# Nouz — Semantic Knowledge Graph for Obsidian
+# NOUZ — Semantic Knowledge Graph for Obsidian
+
+> One server. Three approaches. Your notes find their own place in the graph.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![MCP](https://img.shields.io/badge/protocol-MCP_stdio-lightgrey.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/badge/pypi-nouz--mcp-orange.svg)](https://pypi.org/project/nouz-mcp/)
 
-An MCP server that builds a Directed Acyclic Graph (DAG) on top of your Obsidian vault. Notes are classified based on their semantic content.
+---
 
-```bash
-pip install nouz-mcp
-OBSIDIAN_ROOT=/path/to/vault nouz-mcp
-```
+## Why NOUZ?
+
+You write in Obsidian. A lot. Over time your vault turns into a mess — hundreds of notes connected somehow, with no system or logic.
+
+NOUZ fixes this. It reads your notes, analyzes the content, and **builds the knowledge graph itself** — what belongs where, what "sign" each note has, where the semantic connections between different branches are.
+
+No API keys needed. NOUZ works with your own embedding model.
 
 ---
 
-## Three Modes
+## What NOUZ Does
 
-<p align="center"><img src="banner_three_modes.svg" alt="Nouz Three Modes"></p>
+### Builds the Graph
 
-Start with **luca** if you want to build the structure manually. Switch to **prizma** or **sloi** when you want full Nouz capabilities.
+Add `parents:` to a note — and NOUZ automatically places it in the hierarchy. No manual folder sorting.
 
----
+### Classifies by Content
 
-## How Classification Works
+Using embeddings (local model), NOUZ understands what the note is about and assigns it a "sign" — T (technology), S (science), H (humanities) or any other you define.
 
-### Reference Vectors (Cores)
+### Finds Hidden Connections
 
-You define 2–5 knowledge domains in `config.yaml` as descriptive texts. The server converts these texts into embeddings and stores them as reference vectors — coordinate axes in the embedding space.
+Notes from different branches can be semantically close. NOUZ finds these bridges and suggests linking them.
 
-```yaml
-mode: prizma
+### Tracks Knowledge Drift
 
-etalons:
-  - sign: S
-    text: "physics thermodynamics entropy quantum mechanics cosmology topology
-           statistical mechanics information theory complexity emergence"
-  - sign: T
-    text: "software engineering algorithms machine learning neural networks
-           distributed systems programming languages language models automation"
-  - sign: H
-    text: "philosophy epistemology cognitive science linguistics sociology
-           ethics phenomenology semiotics history of science"
-```
-
-**On the quality of cores:** Separation between cores is more important than their content. Run `calibrate_cores` after writing them and check `pairwise_cosine` — values below 0.55 between any two cores indicate good separation.
-
-This is analogous to choosing orthogonal basis vectors. In a well-calibrated system, each note projects primarily onto one axis.
-
-### Sign Assignment
-
-When a note is indexed with embeddings enabled, its content vector is compared against all reference vectors:
-
-```
-scores     = {S: cosine(note, core_S), T: cosine(note, core_T), H: cosine(note, core_H)}
-spread     = max(scores) - min(scores)
-adjusted   = {k: scores[k] - min(scores) for k in scores}
-percent    = {k: adjusted[k] / sum(adjusted) * 100 for k in adjusted}
-sign       = all domains where percent[k] >= 30%
-```
-
-If `spread < 0.05`, the note doesn't project clearly onto any single axis. The sign remains undefined. The domain identity of the note is genuinely undetermined until more content is added or the cores are recalibrated.
-
-**Priority Rule:** A sign manually set in the YAML frontmatter is never overwritten by the classifier. `sign_manual > sign_auto > inherited`.
-
-### Inheritance
-
-The sign flows top-down through hierarchical links:
-
-```
-L1 core      ← defined manually, never changes
-L2 pattern   ← defined manually + optional second sign from embedding
-L3 module    ← inherits sign from parent pattern via hierarchical link
-L4 quant     ← hybrid: inherited sign from module + embedding result
-L5 artifact  ← inherits from parent quant (hierarchy) or self-assigned (temporary)
-```
-
-This mirrors the cortical hierarchy model (Friston, 2009; Bastos et al., 2012): higher-level representations send top-down predictions that constrain processing at lower levels. A hierarchical link in Nouz is structurally equivalent — the parent node's sign sets the prior probability for its children.
-
-### core_mix — Bottom-Up Aggregation
-
-While the sign flows top-down (intent), `core_mix` flows bottom-up (reality):
-
-```
-quant (L4)  → updates core_mix of parent module (L3)
-module (L3) → aggregates into core_mix of parent pattern (L2)
-```
-
-Each module accumulates the averaged domain distribution of all its quants. When the declared sign (top-down, intent) diverges from the core_mix (bottom-up, reality), the system reports a `core_drift`.
-
-This bidirectional flow — top-down constraints, bottom-up evidence — aligns with the predictive coding framework: upper levels generate predictions, lower levels return prediction errors, and the system minimizes the discrepancy.
+Over time the content of a branch changes. NOUZ shows when the actual composition of notes diverges from the declared topic — this is `core_drift`, a signal that the branch has grown beyond its domain.
 
 ---
 
-## Semantic Bridges
+## Three Modes for Different Tasks
 
-`suggest_metadata` returns candidates for cross-domain links, marked with `proposed: true` and requiring explicit confirmation before being added to the graph.
+| Mode | What It Does | Embeddings? |
+|-------|------------|-------------|
+| **LUCA** | Pure graph — only links and hierarchy | ❌ |
+| **PRIZMA** | Full semantics — classification, bridges, drift | ✅ |
+| **SLOI** | Strict 5-level hierarchy with control | ✅ |
 
-**Semantic Bridges** — full-note similarity across different domains:
-
-```
-For note A (sign=S) and note B (sign=T):
-  if cosine(embed(A), embed(B)) >= 0.55 → proposed semantic link
-```
-
-Finds notes that are semantically similar overall but belong to different knowledge domains. A note about thermodynamic entropy and a note about data compression might have high embedding similarity despite having different domain signs. Bridges detect that two notes potentially talk *about the same thing* from different perspectives.
-
----
-
-## Example: Scientific Knowledge Base
-
-Three cores: **Physics** (Ψ), **Mathematics** (Δ), **Computing** (Σ).
-
-After calibration and indexing:
-
-```
-Ψ Physics
-├── Ψ Statistical Mechanics          [pattern, sign=Ψ]
-│   ├── ΨΔ Entropy and Information   [module, sign=ΨΔ — physics + math above threshold]
-│   │   ├── Ψ Boltzmann Entropy      [quant, sign=Ψ, inherited]
-│   │   ├── ΨΔ Shannon Entropy       [quant, sign=ΨΔ, embedding + inherited]
-│   │   └── Δ Kolmogorov Complexity  [quant, sign=Δ, embedding dominates]
-│   └── Ψ Phase Transitions          [module, sign=Ψ]
-│       ├── Ψ Ising Model            [quant]
-│       └── ΨΣ Mean Field Theory     [quant, sign=ΨΣ — also computing]
-└── ΨΔ Topology                      [pattern, second sign from embedding]
-    └── Δ Persistent Homology        [module, sign=Δ]
-        └── ΔΣ TDA Pipeline          [quant, sign=ΔΣ — math + computing]
-
-Σ Computing
-├── Σ Machine Learning               [pattern]
-│   ├── Σ Neural Networks            [module]
-│   │   ├── Σ Backpropagation        [quant]
-│   │   └── ΣΔ Attention Mechanism   [quant, sign=ΣΔ — computing + math]
-│   └── ΣΨ Generative Models         [module, core_mix shows drift towards Ψ]
-```
-
-After running `recalc_core_mix`, the `Statistical Mechanics` module shows:
-
-```
-sign (intent):    Ψ
-core_mix (reality): {Ψ: 52%, Δ: 41%, Σ: 7%}
-core_drift: detected — significant Δ component not reflected in sign
-```
-
-This signals that the module has grown beyond its declared domain. Drift is not an error; it's information about how the knowledge base has evolved.
-
-Example of a semantic bridge: `Shannon Entropy` (sign=Ψ) and `Attention Mechanism` (sign=ΣΔ) have high embedding similarity despite being in different domains — both involve weighted information selection under constraints. The bridge is proposed automatically.
+Start with **LUCA** — just connect and add links. Move to PRIZMA or SLOI when you want semantics.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Installation
+# Install via PyPI (recommended)
 pip install nouz-mcp
-
-# Configuration
-cat > config.yaml << 'EOF'
-mode: prizma
-etalons:
-  - sign: S
-    text: "your first domain"
-  - sign: T
-    text: "your second domain"
-EOF
 
 # Run
 OBSIDIAN_ROOT=/path/to/vault nouz-mcp
 ```
 
-Add to Claude Desktop:
+Or from source:
+
+```bash
+git clone https://github.com/KVANTRA-dev/NOUZ-MCP
+cd NOUZ-MCP
+pip install -r requirements.txt
+OBSIDIAN_ROOT=./vault python server.py
+```
+
+Connect to Claude Desktop, Cursor, Opencode, or any other MCP client:
 
 ```json
 {
@@ -180,6 +81,7 @@ Add to Claude Desktop:
       "command": "nouz-mcp",
       "env": {
         "OBSIDIAN_ROOT": "/path/to/vault",
+        "MODE": "prizma",
         "EMBED_API_URL": "http://127.0.0.1:1234/v1"
       }
     }
@@ -189,45 +91,270 @@ Add to Claude Desktop:
 
 ---
 
-## MCP Tools
+## How It Works
 
-**All Modes**
+### 1. You Write a Note
+
+```yaml
+---
+type: module
+level: 3
+sign: T
+parents:
+  - Machine Learning
+---
+
+Your note here.
+```
+
+### 2. NOUZ Builds the Graph
+
+- Reads YAML → builds DAG (directed acyclic graph)
+- Vectorizes text → calculates proximity to your cores
+- Proposes sign, level, parents
+- Finds bridges to other branches
+
+### 3. Structure Emerges from Content
+
+```
+T (core)
+ ├── TH (pattern: AI)
+ │   ├── TH (module: ML)
+ │   │   ├── TH (quant: neural-networks.md) — T
+ │   │   └── TS (quant: transformers.md) — T
+ │   └── TH (module: Ethics)
+ │       └── TH (quant: ai-safety.md) — T
+ └── TS (pattern: Physics)
+     └── ...
+```
+
+The more you write — the smarter your knowledge base becomes, and the agent working with NOUZ.
+
+---
+
+## How Classification Works
+
+### Cores — Coordinate Axes
+
+In `config.yaml` you define 2–5 domains as text descriptions. The server converts them into reference vectors — **coordinate axes** in the multidimensional embedding space.
+
+```yaml
+mode: prizma
+
+etalons:
+  - sign: T
+    name: Technology
+    text: "programming software architecture machine learning neural networks"
+  - sign: S
+    name: Science
+    text: "physics chemistry biology mathematics formal logic theorems"
+  - sign: H
+    name: Humanities
+    text: "philosophy psychology sociology history literature ethics"
+```
+
+**On core quality:** separation between cores matters more than description accuracy. After writing — run `calibrate_cores` and check `pairwise_cosine`. Values above 0.55 between any two cores means they're too similar and the classifier will confuse domains. This is analogous to orthogonal basis vectors: the more orthogonal — the more accurate the projection.
+
+### Sign Assignment
+
+For each note, its content vector is compared against all reference vectors:
+
+```
+scores     = {S: cosine(note, core_S), T: cosine(note, core_T), H: cosine(note, core_H)}
+spread     = max(scores) - min(scores)
+```
+
+If `spread < 0.05` — the note is equidistant from all cores, sign is undefined. This is not an error: the note genuinely belongs to multiple domains or its content is insufficient for classification.
+
+```
+adjusted   = {k: scores[k] - min(scores) for k in scores}
+percent    = {k: adjusted[k] / sum(adjusted) * 100 for k in adjusted}
+sign       = all domains where percent[k] >= 30%
+```
+
+If two domains score ≥ 30% — the sign is composite: `TS`, `SH`. This is not a contradiction, but a spectrum: the note lives on the border between domains.
+
+### Sign Inheritance
+
+The sign flows top-down through hierarchical links:
+
+```
+L1 core      ← defined manually, never changes
+L2 pattern   ← defined manually + embedding adds second sign (if ≥ 30%)
+L3 module    ← inherits sign from parent pattern
+L4 quant     ← hybrid: sign from L3 parent + embedding content
+L5 artifact  ← inherits sign from parent quant
+```
+
+Priority: `sign_manual (YAML) > sign_auto (embedding) > inherited`
+
+Manual sign in YAML is **never overwritten** automatically.
+
+### Sign Confidence: auto vs weak_auto
+
+Spread-normalization answers "which core is *relatively closer*". But it doesn't answer "how close is the note to this core in *absolute terms*".
+
+For this there's `confident_cosine` — a threshold on `max(cosine)`:
+
+```
+max_cosine >= confident_cosine → sign_source = "auto"      (confident sign)
+max_cosine < confident_cosine  → sign_source = "weak_auto" (relative sign)
+```
+
+**What this means in practice:**
+
+`weak_auto` occurs when the note has a relative winner among cores (spread is normal), but in absolute terms all cosines are low. This happens when:
+- The note is short or not written in the language of the cores
+- The cores don't cover the note's topic well
+- The embedding model isn't strong in this domain
+
+**Impact on semantic bridges:**
+
+This is where it matters. Semantic bridges are only proposed between notes with *different* signs — if signs match, they're assumed to be "the same area". But if the sign is `weak_auto` — this assumption is unreliable.
+
+```
+sign_source = "auto"      → sign is considered closed. Bridges to the same core are not proposed.
+sign_source = "weak_auto" → sign is open. Bridges to notes with the same core are still proposed.
+```
+
+This gives you a choice: either set the sign manually (close the domain), or let the system keep proposing connections from all directions.
+
+**Threshold tuning:**
+
+```yaml
+thresholds:
+  confident_cosine: 0.6  # for most models (e5, BGE, multilingual)
+  # confident_cosine: 0.75  # for nomic-embed (high baseline 0.74–0.83)
+```
+
+The higher the threshold — the stricter the confidence requirement, the more notes get `weak_auto`. Calibrate for your model.
+
+---
+
+### core_mix — Reality Bottom-Up
+
+The sign flows top-down (intent). `core_mix` flows bottom-up (reality):
+
+```
+quant (L4) → updates core_mix of parent module (L3)
+module (L3) → aggregates into core_mix of parent pattern (L2)
+```
+
+Each module accumulates the averaged domain distribution of all its quants. When the declared sign (intent) diverges from `core_mix` (reality) — the system reports `core_drift`.
+
+This is not an error. It's information about how the knowledge base has evolved. A branch with `sign=T` can gradually accumulate 60% of notes about mathematics — and `core_drift` will show this.
+
+This bidirectional flow — top-down constraints and bottom-up evidence — mirrors the architecture of hierarchical predictive coding systems: upper levels set expectations, lower levels return discrepancies.
+
+---
+
+## Semantic Bridges
+
+`suggest_metadata` returns candidates for cross-domain links. All bridges are marked with `proposed: true` and require explicit confirmation.
+
+**Algorithm:**
+
+```
+For note A (sign=S) and note B (sign=T):
+  if cosine(embed(A), embed(B)) >= 0.55 → propose link
+```
+
+Finds notes that are **semantically similar overall** but belong to different domains. A note about thermodynamic entropy and a note about data compression can have high embedding similarity — both are about efficient information encoding. The bridge detects that they're talking about the same thing from different angles.
+
+The 0.55 threshold is configurable in `config.yaml` via `semantic_bridge_threshold`.
+
+---
+
+## Customize It
+
+```yaml
+mode: prizma
+
+etalons:
+  - sign: T
+    name: Technology & Engineering
+    text: "programming software architecture infrastructure machine learning neural networks
+           algorithms frameworks database cloud computing"
+  - sign: S
+    name: Science & Mathematics
+    text: "physics chemistry biology mathematics formal logic theorems cosmology quantum
+           mechanics research methodology"
+  - sign: H
+    name: Humanities & Arts
+    text: "philosophy psychology sociology history literature art culture ethics
+           cognitive science epistemology linguistics"
+
+thresholds:
+  sign_spread: 0.05           # minimum spread for classification
+  pattern_second_sign_threshold: 30.0  # second sign threshold (%)
+  semantic_bridge_threshold: 0.55      # semantic bridge threshold
+```
+
+---
+
+## Tools
+
+### All Modes
 
 | Tool | Description |
-|------|-------------|
+|-----------|----------|
 | `read_file` | Read a note with YAML metadata |
 | `write_file` | Create or update a note |
-| `list_files` | Filter by level, sign, subfolder |
-| `get_children` | Traverse DAG downwards |
-| `get_parents` | Traverse DAG upwards |
-| `index_all` | Reindex the vault |
-| `format_entity_compact` | Compact formula: `(children)[entity]{parents}` |
+| `list_files` | List with filters by level, sign, subfolder |
+| `get_children` | Traverse DAG downwards (all children) |
+| `get_parents` | Traverse DAG upwards (parents) |
+| `index_all` | Reindex the entire vault |
+| `format_entity_compact` | Entity formula: `(children)[entity]{parents}` |
 
-**prizma / sloi only**
+### PRIZMA / SLOI
 
 | Tool | Description |
-|------|-------------|
-| `calibrate_cores` | Embed core texts → reference vectors |
-| `recalc_signs` | Reclassify all notes using embeddings |
-| `recalc_core_mix` | Propagate bottom-up aggregation |
-| `suggest_metadata` | Classify a note, propose bridges |
-| `suggest_parents` | Find parent candidates by semantic similarity |
-| `embed` | Get the embedding vector for any text |
+|-----------|----------|
+| `calibrate_cores` | Vectorize core texts → reference vectors |
+| `recalc_signs` | Reclassify all notes by embeddings |
+| `recalc_core_mix` | Recalculate bottom-up aggregation |
+| `suggest_metadata` | Propose sign, level, semantic bridges |
+| `suggest_parents` | Find parents by semantic similarity |
+| `embed` | Get embedding vector for any text |
 
 ---
 
 ## Configuration
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+|-----------|-------------|----------|
 | `OBSIDIAN_ROOT` | `./obsidian` | Path to the vault |
-| `MODE` | `luca` | `luca`, `prizma`, or `sloi` |
+| `MODE` | `luca` | Mode: `luca`, `prizma`, or `sloi` |
 | `EMBED_ENABLED` | `true` | Enable embeddings |
-| `EMBED_PROVIDER` | `openai` | `openai`, `lmstudio`, `gigachat` |
+| `EMBED_PROVIDER` | `openai` | Provider: `openai`, `lmstudio`, `ollama`, `gigachat` |
 | `EMBED_API_URL` | `http://127.0.0.1:1234/v1` | Endpoint for embeddings |
 | `EMBED_API_KEY` | `` | API key if required |
 
-Everything runs locally. Your data does not leave your machine unless you connect a cloud AI agent.
+---
+
+## Privacy: What Stays Local
+
+| Component | Local? |
+| -------------------------------------------------- | ----------------------- |
+| **Embeddings** (LM Studio / Ollama) | ✅ Yes |
+| **Your notes** (raw files) | ✅ Yes |
+| **NOUZ server** | ✅ Yes |
+| **AI agent context** (what the cloud model sees) | ❌ No — goes to the cloud |
+
+NOUZ runs locally. But when you connect a cloud AI agent (Claude, ChatGPT, etc.), the content it sees — including your notes — goes to that provider's cloud. This is outside NOUZ control.
+
+**Your choice:** use local agents or accept the trade-off.
+
+---
+
+## Who Is It For?
+
+| | |
+| ----------------------------- | -------------------------------------------------------------------- |
+| **Order lovers** | Want structure without spending time on manual organization |
+| **Researchers** | Gather lots of information and want to see connections |
+| **AI enthusiasts** | Building knowledge graphs for RAG or agent systems |
+| **Everyone with >100 notes** | When folders stop coping |
 
 ---
 
@@ -235,11 +362,24 @@ Everything runs locally. Your data does not leave your machine unless you connec
 
 ```bash
 pip install -e .
-pytest
 ```
 
 ---
 
-[Glama](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP) · [Website](https://kvantra-dev.github.io/nouz/) · [PyPI](https://pypi.org/project/nouz-mcp/)
+## Links
 
-*Maria Belkina · KVANTRA · MIT License*
+- 🌐 [Website](https://kvantra-dev.github.io/nouz/)
+- 📦 [PyPI](https://pypi.org/project/nouz-mcp/)
+- 🗂️ [Glama Registry](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP)
+- 💬 [Telegram: Volnaya Sreda](https://t.me/volnaya_sreda)
+- 🐙 [GitHub](https://github.com/KVANTRA-dev/NOUZ-MCP)
+
+---
+
+**Structure emerges from content** — you just write.
+
+MIT License © 2026 KVANTRA
+
+---
+
+*Cosines are calculated, syntax changes, semantics remains.*
