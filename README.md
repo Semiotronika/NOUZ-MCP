@@ -1,3 +1,5 @@
+<img width="1000" height="120" alt="banner 1" src="https://github.com/user-attachments/assets/83b4e93c-6432-4345-94f4-a100f2e549b7" />
+
 # Nouz — Semantic Knowledge Graph for Obsidian
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
