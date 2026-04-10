@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz — Unified MCP Server for Obsidian. v2.1.1
+Nouz — Unified MCP Server for Obsidian. v2.1.2
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -9,7 +9,7 @@ Three modes:
 - sloi: Strict 5-level hierarchy with semantic classification
 """
 
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 
 import asyncio
 import hashlib
@@ -721,24 +721,34 @@ def _signs_share_core(sign_a: str, sign_b: str) -> bool:
     return False
 
 async def _find_semantic_bridges(
-    db_path: str, own_path: str, own_sign: str, own_vec: List[float]
+    db_path: str, own_path: str, own_sign: str, own_vec: List[float],
+    own_sign_source: str = "auto"
 ) -> List[Dict]:
     if not RULE["semantic_bridges"] or not own_vec:
         return []
 
+    # If own sign is weak_auto, we don't treat it as a firm domain boundary.
+    # Bridges to notes sharing this sign's core are still proposed — because
+    # the domain identity of this note is uncertain and cross-domain links may
+    # help the user decide whether to confirm the sign or leave it open.
+    sign_for_blocking = own_sign if own_sign_source != "weak_auto" else ""
+
     bridges = []
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            "SELECT f.path, f.sign, e.embedding "
+            "SELECT f.path, f.sign, f.sign_source, e.embedding "
             "FROM files f JOIN embeddings e ON f.path = e.path "
             "WHERE e.embedding IS NOT NULL"
         ) as cur:
             rows = await cur.fetchall()
 
-    for path, other_sign, emb_json in rows:
+    for path, other_sign, other_sign_source, emb_json in rows:
         if path == own_path:
             continue
-        if _signs_share_core(own_sign, other_sign or ""):
+        # Block bridge only if BOTH signs are confident (manual or auto).
+        # If either side is weak_auto — bridge is still proposed.
+        other_sign_for_blocking = (other_sign or "") if other_sign_source != "weak_auto" else ""
+        if _signs_share_core(sign_for_blocking, other_sign_for_blocking):
             continue
         try:
             other_vec = json.loads(emb_json)
@@ -855,15 +865,15 @@ def _find_parent_sign(meta: Dict, db_path: str) -> str:
 
 async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, Any]:
     if not RULE["reference_vectors"]:
-        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "confident": False}
+        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
     
     vec = await _get_embedding(content[:EMBED_MAX_CHARS])
     if not vec:
-        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "confident": False}
+        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
 
     etalons = await _load_reference_vectors(db_path)
     if not etalons:
-        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "confident": False}
+        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
 
     scores = {sign: _cosine(vec, ev) for sign, ev in etalons.items()}
 
@@ -878,6 +888,7 @@ async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, 
             "scores": {k: round(v, 4) for k, v in scores.items()},
             "percentages": {k: round(100.0 / len(scores), 1) for k in scores},
             "spread": round(spread, 4),
+            "max_cosine": round(max_val, 4),
             "confident": False,
         }
 
@@ -892,13 +903,20 @@ async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, 
     )
     dominant = above[0] if above else None
 
+    # confident = has dominant AND max_cosine is above absolute threshold.
+    # If spread is high (clear winner) but max_cosine is low, the note is
+    # relatively closer to one core, but not semantically close to any of them
+    # in absolute terms — classification is weak.
+    confident = bool(dominant) and (max_val >= CONFIDENT_COSINE_THRESHOLD)
+
     return {
         "dominant": dominant,
         "above_threshold": above,
         "scores": {k: round(v, 4) for k, v in scores.items()},
         "percentages": percentages,
         "spread": round(spread, 4),
-        "confident": bool(dominant),
+        "max_cosine": round(max_val, 4),
+        "confident": confident,
     }
 
 async def suggest_parents(file_path: str, db_path: str, top_n: int = 3) -> Dict[str, Any]:
@@ -1006,18 +1024,28 @@ async def _determine_sign_smart(
     core_result = await _determine_core_by_embedding(content, db_path)
     above = core_result.get("above_threshold", [])
     sign_auto = "".join(above) if above else (list(CORE_SIGNS)[0] if CORE_SIGNS else "")
+    confident = core_result.get("confident", False)
     
     if sign_manual:
         return {
             "actual_sign": sign_manual,
             "sign_auto": sign_auto,
-            "source": "manual"
+            "source": "manual",
+            "confident": True,  # manual sign is always treated as confident
         }
     
+    # "auto" = spread clear + max_cosine above threshold → sign is reliable
+    # "weak_auto" = spread shows a winner but max_cosine is low → sign is a
+    #   relative best-guess. Semantic bridges to this sign's core are NOT blocked,
+    #   because the domain identity is uncertain. User should either confirm the
+    #   sign manually or let bridges propose cross-domain links.
+    source = "auto" if confident else "weak_auto"
+
     return {
         "actual_sign": sign_auto,
         "sign_auto": sign_auto,
-        "source": "auto"
+        "source": source,
+        "confident": confident,
     }
 
 
@@ -1095,7 +1123,9 @@ async def _suggest_metadata_impl(
     sign_source = sign_result["source"]
 
     if vec and file_path and RULE["semantic_bridges"]:
-        semantic_bridges = await _find_semantic_bridges(db_path, str(file_path), actual_sign, vec)
+        semantic_bridges = await _find_semantic_bridges(
+            db_path, str(file_path), actual_sign, vec, own_sign_source=sign_source
+        )
 
     errors = _check_hierarchy(type_, parents_obj)
     
@@ -1134,6 +1164,8 @@ async def _suggest_metadata_impl(
         core_result = await _determine_core_by_embedding(content, db_path)
         if core_result.get("percentages"):
             result["core_percentages"] = core_result["percentages"]
+        result["max_cosine"] = core_result.get("max_cosine", 0.0)
+        result["confident"] = sign_result.get("confident", False)
 
     warnings = []
     metrics = {}
