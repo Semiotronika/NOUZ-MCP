@@ -36,7 +36,24 @@ levels:
   artifact: 5
 
 thresholds:
+  # Minimum spread between max and min cosine scores to attempt classification.
+  # If spread < sign_spread, the note is equidistant from all cores → sign is not assigned.
   sign_spread: 0.05
-  confident_cosine: 0.75
+
+  # Minimum absolute cosine between the note and its closest core.
+  # If max_cosine >= confident_cosine → sign_source = "auto" (reliable).
+  # If max_cosine < confident_cosine → sign_source = "weak_auto" (relative best-guess).
+  # Effect on bridges: weak_auto signs do NOT block semantic bridges to the same core —
+  # the domain identity is uncertain, so cross-domain connections are still proposed.
+  # Tune this to your embedding model: nomic-embed baseline is ~0.74–0.83, so 0.75 is
+  # tight. For models with lower baseline (e5, BGE), 0.5–0.6 is more appropriate.
+  confident_cosine: 0.6
+
+  # Minimum normalized percentage for a core to appear in the sign.
+  # After spread-normalization: if adjusted_score / total * 100 >= this threshold,
+  # the core is included. Allows compound signs like "TS" when two cores both score ≥ 30%.
   pattern_second_sign_threshold: 30.0
+
+  # Minimum cosine similarity between two notes to propose a semantic bridge.
+  # Only proposed between notes with different core signs (cross-domain links).
   semantic_bridge_threshold: 0.55
