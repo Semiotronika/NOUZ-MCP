@@ -1,5 +1,7 @@
 README.md
 pyproject.toml
+nouz_mcp/__init__.py
+nouz_mcp/server.py
 nouz_mcp.egg-info/PKG-INFO
 nouz_mcp.egg-info/SOURCES.txt
 nouz_mcp.egg-info/dependency_links.txt

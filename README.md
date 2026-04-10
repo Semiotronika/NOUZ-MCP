@@ -1,5 +1,3 @@
-<img width="1000" height="120" alt="banner 1" src="https://github.com/user-attachments/assets/7aad8385-fdce-4c3c-8103-97656ed791db" />
-
 # NOUZ — Semantic Knowledge Graph for Obsidian
 
 > One server. Three approaches. Your notes find their own place in the graph.
@@ -354,7 +352,7 @@ NOUZ runs locally. But when you connect a cloud AI agent (Claude, ChatGPT, etc.)
 | **Order lovers** | Want structure without spending time on manual organization |
 | **Researchers** | Gather lots of information and want to see connections |
 | **AI enthusiasts** | Building knowledge graphs for RAG or agent systems |
-| **Everyone with >100 notes** | 
+| **Everyone with >100 notes** | When folders stop coping |
 
 ---
 
@@ -383,4 +381,5 @@ MIT License © 2026 KVANTRA
 ---
 
 *Cosines are calculated, syntax changes, semantics remains.*
+
 <!-- mcp-name: io.github.KVANTRA-dev/NOUZ-MCP -->

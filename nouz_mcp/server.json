@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.KVANTRA-dev/nouz",
+  "name": "io.github.KVANTRA-dev/NOUZ-MCP",
   "title": "Nouz",
   "description": "Unified MCP Server for Obsidian - graph-based note management with semantic classification",
   "repository": {
-    "url": "https://github.com/KVANTRA-dev/NOUZ-MCP",
+    "url": "https://github.com/KVANTRA-dev/nouz-mcp",
     "source": "github"
   },
   "version": "2.1.2",
@@ -12,7 +12,7 @@
     {
       "registryType": "pypi",
       "identifier": "nouz-mcp",
-      "version": "2.1.2",
+"version": "2.1.2",
       "transport": {
         "type": "stdio"
       },

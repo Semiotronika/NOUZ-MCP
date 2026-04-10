@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: nouz-mcp
-Version: 2.1.1
+Version: 2.1.2
 Summary: Unified MCP Server for Obsidian - graph-based note management with semantic classification
 Author-email: KVANTRA-dev <your-email@example.com>
 License: MIT
@@ -82,11 +82,7 @@ MODE=sloi nouz-mcp
 ## Development
 
 ```bash
-# Install in development mode
 pip install -e .
-
-# Run tests
-pytest
 ```
 
 ---
