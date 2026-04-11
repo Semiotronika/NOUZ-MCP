@@ -9,7 +9,7 @@ Three modes:
 - sloi: Strict 5-level hierarchy with semantic classification
 """
 
-VERSION = "2.1.3"
+VERSION = "2.1.4"
 
 import asyncio
 import hashlib
