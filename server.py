@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz — Unified MCP Server for Obsidian. v2.1.4
+Nouz -- Unified MCP Server for Obsidian. v2.2.0
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -9,7 +9,7 @@ Three modes:
 - sloi: Strict 5-level hierarchy with semantic classification
 """
 
-VERSION = "2.1.4"
+VERSION = "2.2.0"
 
 import asyncio
 import hashlib
@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
 
 import aiofiles
-import frontmatter
+from frontmatter import Frontmatter
 import aiohttp
 import aiosqlite
 from mcp.server import Server
@@ -37,9 +37,12 @@ from mcp import types
 # ============================================================================
 
 DEFAULT_CONFIG = {
+    "mode": "prizma",
+    "etalons": [],
+    "meta_root": "",
     "profiles": {
         "default": {
-            "mode": "luca",
+            "mode": "prizma",
             "etalons": []
         }
     },
@@ -52,9 +55,10 @@ DEFAULT_CONFIG = {
     },
     "thresholds": {
         "sign_spread": 0.05,
-        "confident_cosine": 0.75,
+        "confident_cosine": 0.6,
         "pattern_second_sign_threshold": 30.0,
-        "semantic_bridge_threshold": 0.55
+        "semantic_bridge_threshold": 0.55,
+        "structural_bridge_threshold": 0.55
     }
 }
 
@@ -93,34 +97,38 @@ RULES = {
 
 def load_config() -> Dict[str, Any]:
     config_path = Path(__file__).parent / "config.yaml"
+    local_config_path = Path(__file__).parent / "config_local.yaml"
     profile_name = os.getenv("PROFILE", "default")
+    
+    if local_config_path.exists():
+        try:
+            with open(local_config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+            
+            profiles = config.get("profiles", {})
+            if profiles and profile_name in profiles:
+                profile = profiles[profile_name]
+                config["mode"] = profile.get("mode", config.get("mode", "prizma"))
+                config["etalons"] = profile.get("etalons", config.get("etalons", []))
+                logging.info(f"Loaded local config, profile: {profile_name}")
+                return config
+            
+            if config.get("etalons"):
+                logging.info(f"Loaded local config (no profile match), using top-level etalons")
+                return config
+        except Exception as e:
+            logging.warning(f"Failed to load local config: {e}")
     
     if config_path.exists():
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
             logging.info(f"Loaded config from {config_path}")
-            
-            profiles = config.get("profiles", {})
-            if profiles and profile_name in profiles:
-                profile = profiles[profile_name]
-                config["mode"] = profile.get("mode", config.get("mode", "luca"))
-                config["etalons"] = profile.get("etalons", config.get("etalons", DEFAULT_CONFIG["profiles"]["default"]["etalons"]))
-                logging.info(f"Using profile: {profile_name}")
-            elif "etalons" not in config and "profiles" not in config:
-                config["etalons"] = DEFAULT_CONFIG["profiles"]["default"]["etalons"]
-            
             return config
         except Exception as e:
             logging.warning(f"Failed to load config: {e}, using defaults")
     
-    default_profile = DEFAULT_CONFIG["profiles"].get(profile_name, DEFAULT_CONFIG["profiles"]["default"])
-    return {
-        "mode": default_profile["mode"],
-        "etalons": default_profile["etalons"],
-        "levels": DEFAULT_CONFIG["levels"],
-        "thresholds": DEFAULT_CONFIG["thresholds"]
-    }
+    return DEFAULT_CONFIG
 
 CONFIG = load_config()
 PROFILE = os.getenv("PROFILE", "default")
@@ -131,9 +139,18 @@ CORE_ETALON_TEXTS = {e["sign"]: e["text"] for e in CONFIG.get("etalons", DEFAULT
 CORE_SIGNS = set(CORE_ETALON_TEXTS.keys())
 LEVEL_MAP = CONFIG.get("levels", DEFAULT_CONFIG["levels"])
 SIGN_SPREAD_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("sign_spread", 0.05)
-CONFIDENT_COSINE_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("confident_cosine", 0.75)
+CONFIDENT_COSINE_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("confident_cosine", 0.6)
 PATTERN_SECOND_SIGN_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("pattern_second_sign_threshold", 30.0))
 SEMANTIC_BRIDGE_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("semantic_bridge_threshold", 0.55)
+STRUCTURAL_BRIDGE_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("structural_bridge_threshold", 0.55))
+
+META_ROOT_NAME = CONFIG.get("meta_root", "")
+
+def _is_meta_root(file_path) -> bool:
+    if not META_ROOT_NAME:
+        return False
+    stem = Path(str(file_path)).stem
+    return stem == META_ROOT_NAME or stem.endswith(META_ROOT_NAME)
 
 
 # ============================================================================
@@ -283,6 +300,25 @@ def _cosine(v1: List[float], v2: List[float]) -> float:
     return dot / (n1 * n2)
 
 
+def _mean_center(vecs: Dict[str, List[float]]) -> Dict[str, List[float]]:
+    """Subtract the mean vector from all vectors (anisotropy correction).
+    
+    Transformer embeddings cluster in a narrow cone, inflating all pairwise
+    cosine similarities. Subtracting the centroid removes this shared component
+    and reveals true semantic distances (Su et al. 2021, WhitenedCSE 2023).
+    """
+    if len(vecs) < 2:
+        return vecs
+    dim = len(next(iter(vecs.values())))
+    mean = [0.0] * dim
+    for v in vecs.values():
+        for i in range(dim):
+            mean[i] += v[i]
+    n = len(vecs)
+    mean = [m / n for m in mean]
+    return {k: [v[i] - mean[i] for i in range(dim)] for k, v in vecs.items()}
+
+
 # ============================================================================
 # Files & YAML Processing
 # ============================================================================
@@ -292,9 +328,9 @@ async def read_file_with_metadata(file_path: Path) -> Dict[str, Any]:
         async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
             raw = await f.read()
         try:
-            post = frontmatter.loads(raw)
-            meta = {k: _serialize(v) for k, v in post.metadata.items()}
-            meta['content'] = post.content
+            result = Frontmatter.read(raw)
+            meta = {k: _serialize(v) for k, v in result['attributes'].items()}
+            meta['content'] = result['body']
         except Exception as fm_err:
             logger.warning(f"frontmatter parse error for {file_path.name}, using fallback: {fm_err}")
             meta = {"path": str(file_path), "content": raw, "frontmatter_error": str(fm_err)}
@@ -727,8 +763,8 @@ async def _find_semantic_bridges(
     if not RULE["semantic_bridges"] or not own_vec:
         return []
 
-    # If own sign is weak_auto, we don't treat it as a firm domain boundary.
-    # Bridges to notes sharing this sign's core are still proposed вЂ” because
+# If own sign is weak_auto, we don't treat it as a firm domain boundary.
+    # Bridges to notes sharing this sign's core are still proposed -- because
     # the domain identity of this note is uncertain and cross-domain links may
     # help the user decide whether to confirm the sign or leave it open.
     sign_for_blocking = own_sign if own_sign_source != "weak_auto" else ""
@@ -746,7 +782,7 @@ async def _find_semantic_bridges(
         if path == own_path:
             continue
         # Block bridge only if BOTH signs are confident (manual or auto).
-        # If either side is weak_auto вЂ” bridge is still proposed.
+        # If either side is weak_auto -- bridge is still proposed.
         other_sign_for_blocking = (other_sign or "") if other_sign_source != "weak_auto" else ""
         if _signs_share_core(sign_for_blocking, other_sign_for_blocking):
             continue
@@ -760,11 +796,251 @@ async def _find_semantic_bridges(
                 "entity": Path(path).stem,
                 "link_type": "semantic",
                 "strength": round(sim, 3),
-                "reason": f"cosine={sim:.2f}, signs={own_sign}в†”{other_sign}",
+                "reason": f"cosine={sim:.2f}, signs={own_sign}<->{other_sign}",
             })
 
     bridges.sort(key=lambda x: -x["strength"])
     return bridges[:10]
+
+async def _find_tag_bridges(
+    db_path: str, own_path: str, own_tags: List[str], own_sign: str,
+    threshold: float = 0.72
+) -> List[Dict]:
+    """Gray bridges: semantic similarity at the tag level, not full text.
+
+    Algorithm:
+    - For each tag of the current note: compute embedding
+    - For each other note with a DIFFERENT core: compute embedding of each tag
+    - If at least one tag pair gives cosine >= threshold -> gray bridge
+    - Finds partial concept overlap, not full-text similarity
+
+    Difference from pink (semantic) bridges:
+    - Pink: cosine of full text -- "these notes are about the same thing"
+    - Gray: cosine of individual tags -- "these notes share a hidden concept"
+
+    Example: note about thermodynamic entropy (sign S) and note about
+    technical debt (sign T) -- texts are different, but tag "entropy" is close
+    to tag "disorder" in embedding space -> gray bridge reveals the analogy.
+    """
+    if not RULE["semantic_bridges"] or not own_tags:
+        return []
+
+    own_tag_vecs: Dict[str, List[float]] = {}
+    for tag in own_tags:
+        vec = await _get_embedding(tag)
+        if vec:
+            own_tag_vecs[tag] = vec
+
+    if not own_tag_vecs:
+        return []
+
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            "SELECT f.path, f.sign, f.tags FROM files f "
+            "WHERE f.tags IS NOT NULL AND f.tags != '[]' AND f.tags != ''"
+        ) as cur:
+            rows = await cur.fetchall()
+
+    bridges = []
+    seen_paths = set()
+
+    for path, other_sign, tags_json in rows:
+        if path == own_path or path in seen_paths:
+            continue
+        if _signs_share_core(own_sign, other_sign or ""):
+            continue
+
+        try:
+            other_tags = json.loads(tags_json) if isinstance(tags_json, str) else tags_json
+            if not other_tags:
+                continue
+        except Exception:
+            continue
+
+        best_pair = None
+        best_sim = 0.0
+        for own_tag, own_vec in own_tag_vecs.items():
+            for other_tag in other_tags:
+                other_vec = await _get_embedding(other_tag)
+                if not other_vec:
+                    continue
+                sim = _cosine(own_vec, other_vec)
+                if sim >= threshold and sim > best_sim:
+                    best_sim = sim
+                    best_pair = (own_tag, other_tag)
+
+        if best_pair:
+            seen_paths.add(path)
+            bridges.append({
+                "entity": Path(path).stem,
+                "link_type": "gray",
+                "strength": round(best_sim, 3),
+                "reason": f"tag bridge: '{best_pair[0]}' <-> '{best_pair[1]}' (cosine={best_sim:.2f}), signs={own_sign}<->{other_sign}",
+            })
+
+    bridges.sort(key=lambda x: -x["strength"])
+    return bridges[:10]
+
+
+def _structural_similarity(profile_a: Dict, profile_b: Dict) -> float:
+    """Compute structural similarity between two graph node profiles.
+
+    Analogy bridges connect notes from DIFFERENT cores that share structural position.
+    This is NOT about semantic content -- it's about isomorphic roles in the graph.
+
+    Weights: core_mix angle (0.35) > level match (0.25) > degree similarity (0.20) > tag overlap (0.20)
+    """
+    score = 0.0
+    weights_used = 0.0
+
+    if profile_a.get("core_mix") and profile_b.get("core_mix"):
+        keys = sorted(set(profile_a["core_mix"].keys()) | set(profile_b["core_mix"].keys()))
+        vec_a = [profile_a["core_mix"].get(k, 0.0) for k in keys]
+        vec_b = [profile_b["core_mix"].get(k, 0.0) for k in keys]
+        cos = _cosine(vec_a, vec_b)
+        score += cos * 0.35
+        weights_used += 0.35
+
+    level_a = profile_a.get("level", 0)
+    level_b = profile_b.get("level", 0)
+    if level_a and level_b:
+        level_diff = abs(level_a - level_b)
+        if level_diff == 0:
+            score += 1.0 * 0.25
+        elif level_diff == 1:
+            score += 0.5 * 0.25
+        weights_used += 0.25
+
+    deg_a = max(profile_a.get("degree", 0), 1)
+    deg_b = max(profile_b.get("degree", 0), 1)
+    degree_sim = 1.0 - abs(deg_a - deg_b) / max(deg_a, deg_b)
+    score += degree_sim * 0.20
+    weights_used += 0.20
+
+    tags_a = profile_a.get("tags", set())
+    tags_b = profile_b.get("tags", set())
+    if tags_a and tags_b:
+        intersection = tags_a & tags_b
+        union = tags_a | tags_b
+        jaccard = len(intersection) / len(union) if union else 0.0
+        score += jaccard * 0.20
+        weights_used += 0.20
+
+    return score / weights_used if weights_used > 0 else 0.0
+
+
+async def _find_analogy_bridges(
+    db_path: str, own_path: str, own_sign: str, own_level: int,
+    own_core_mix: Optional[Dict[str, float]], own_tags: Set[str],
+    threshold: float = None
+) -> List[Dict]:
+    """Find structural analogies between notes from DIFFERENT cores.
+
+    Analogy bridges connect notes that play similar roles in the graph
+    despite being about semantically different topics.
+    Example: neural networks (computing) <-> neural pathways (biology) -- similar graph structure.
+
+    Key insight: this is about structural isomorphism, not semantic similarity.
+    Two notes from different cores with similar core_mix proportions,
+    similar level, and similar degree occupy analogous positions in the DAG.
+    """
+    if not RULE["semantic_bridges"]:
+        return []
+
+    if threshold is None:
+        threshold = STRUCTURAL_BRIDGE_THRESHOLD
+
+    own_cores = set(ch for ch in own_sign if ch in CORE_SIGNS)
+    if not own_cores:
+        return []
+
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT path, sign, sign_source, level, tags, core_mix FROM files'
+        ) as cur:
+            all_rows = await cur.fetchall()
+
+    degree_map = {}
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT parent_path, COUNT(*) FROM links WHERE link_type = "hierarchy" GROUP BY parent_path'
+        ) as cur:
+            child_rows = await cur.fetchall()
+        for parent_path, cnt in child_rows:
+            degree_map[parent_path] = degree_map.get(parent_path, 0) + cnt
+        async with db.execute(
+            'SELECT child_path, COUNT(*) FROM links GROUP BY child_path'
+        ) as cur:
+            parent_rows = await cur.fetchall()
+        for child_path, cnt in parent_rows:
+            degree_map[child_path] = degree_map.get(child_path, 0) + cnt
+
+    own_profile = {
+        "level": own_level or 0,
+        "sign": own_sign,
+        "degree": degree_map.get(own_path, 0),
+        "core_mix": own_core_mix or {},
+        "tags": own_tags,
+    }
+
+    bridges = []
+    for path, sign, sign_source, level, tags_json, core_mix_json in all_rows:
+        if path == own_path:
+            continue
+
+        other_sign = sign or ""
+        other_cores = set(ch for ch in other_sign if ch in CORE_SIGNS)
+        if not other_cores:
+            continue
+        if own_cores & other_cores:
+            continue
+
+        if sign_source == "weak_auto":
+            continue
+
+        try:
+            core_mix = json.loads(core_mix_json) if core_mix_json else {}
+        except Exception:
+            core_mix = {}
+
+        try:
+            tag_list = json.loads(tags_json) if isinstance(tags_json, str) and tags_json else []
+        except Exception:
+            tag_list = []
+
+        candidate_profile = {
+            "level": level or 0,
+            "sign": other_sign,
+            "degree": degree_map.get(path, 0),
+            "core_mix": core_mix,
+            "tags": set(tag_list) if tag_list else set(),
+        }
+
+        similarity = _structural_similarity(own_profile, candidate_profile)
+
+        if similarity >= threshold:
+            reasons = []
+            if own_profile.get("core_mix") and candidate_profile.get("core_mix"):
+                a_mix = "/".join(f"{k}{v:.0f}%" for k, v in sorted(own_profile["core_mix"].items(), key=lambda x: -x[1]))
+                b_mix = "/".join(f"{k}{v:.0f}%" for k, v in sorted(candidate_profile["core_mix"].items(), key=lambda x: -x[1]))
+                reasons.append(f"mix: {a_mix} <-> {b_mix}")
+            if own_profile.get("level") and candidate_profile.get("level"):
+                if own_profile["level"] == candidate_profile["level"]:
+                    reasons.append(f"same level L{own_profile['level']}")
+            common_tags = own_profile.get("tags", set()) & candidate_profile.get("tags", set())
+            if common_tags:
+                reasons.append(f"shared tags: {', '.join(list(common_tags)[:3])}")
+
+            bridges.append({
+                "entity": Path(path).stem,
+                "link_type": "analogy",
+                "strength": round(similarity, 3),
+                "reason": f"structural analogy ({'; '.join(reasons)}), signs={own_sign}<->{other_sign}",
+            })
+
+    bridges.sort(key=lambda x: -x["strength"])
+    return bridges[:5]
+
 
 async def _load_reference_vectors(db_path: str) -> Dict[str, List[float]]:
     if not RULE["reference_vectors"]:
@@ -809,14 +1085,18 @@ async def _calibrate_reference_vectors(db_path: str) -> Dict[str, Any]:
         results[sign] = {"status": "ok", "dim": len(vec)}
     
     etalons = await _load_reference_vectors(db_path)
+    centered = _mean_center(etalons)
     signs = sorted(etalons.keys())
     pairs = {}
+    centered_pairs = {}
     for i, s1 in enumerate(signs):
         for s2 in signs[i+1:]:
             sim = _cosine(etalons[s1], etalons[s2])
             pairs[f"{s1}-{s2}"] = round(sim, 4)
+            csim = _cosine(centered[s1], centered[s2])
+            centered_pairs[f"{s1}-{s2}"] = round(csim, 4)
     
-    return {"calibrated": results, "pairwise_cosine": pairs}
+    return {"calibrated": results, "pairwise_cosine": pairs, "pairwise_cosine_centered": centered_pairs}
 
 def _get_sign_from_file(p: Path) -> str:
     try:
@@ -865,17 +1145,26 @@ def _find_parent_sign(meta: Dict, db_path: str) -> str:
 
 async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, Any]:
     if not RULE["reference_vectors"]:
-        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
+        return {"dominant": None, "above_threshold": [], "scores": {}, "scores_raw": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
     
     vec = await _get_embedding(content[:EMBED_MAX_CHARS])
     if not vec:
-        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
+        return {"dominant": None, "above_threshold": [], "scores": {}, "scores_raw": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
 
     etalons = await _load_reference_vectors(db_path)
     if not etalons:
-        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
+        return {"dominant": None, "above_threshold": [], "scores": {}, "scores_raw": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
 
-    scores = {sign: _cosine(vec, ev) for sign, ev in etalons.items()}
+    centered = _mean_center(etalons)
+    centroid = [0.0] * len(vec)
+    n = len(centered)
+    for cv in centered.values():
+        for i in range(len(centroid)):
+            centroid[i] += cv[i] / n
+    vec_centered = [vec[i] - centroid[i] for i in range(len(vec))]
+
+    scores_raw = {sign: _cosine(vec, ev) for sign, ev in etalons.items()}
+    scores = {sign: _cosine(vec_centered, centered[sign]) for sign in centered}
 
     min_val = min(scores.values())
     max_val = max(scores.values())
@@ -886,6 +1175,7 @@ async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, 
             "dominant": None,
             "above_threshold": [],
             "scores": {k: round(v, 4) for k, v in scores.items()},
+            "scores_raw": {k: round(v, 4) for k, v in scores_raw.items()},
             "percentages": {k: round(100.0 / len(scores), 1) for k in scores},
             "spread": round(spread, 4),
             "max_cosine": round(max_val, 4),
@@ -903,16 +1193,13 @@ async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, 
     )
     dominant = above[0] if above else None
 
-    # confident = has dominant AND max_cosine is above absolute threshold.
-    # If spread is high (clear winner) but max_cosine is low, the note is
-    # relatively closer to one core, but not semantically close to any of them
-    # in absolute terms вЂ” classification is weak.
     confident = bool(dominant) and (max_val >= CONFIDENT_COSINE_THRESHOLD)
 
     return {
         "dominant": dominant,
         "above_threshold": above,
         "scores": {k: round(v, 4) for k, v in scores.items()},
+        "scores_raw": {k: round(v, 4) for k, v in scores_raw.items()},
         "percentages": percentages,
         "spread": round(spread, 4),
         "max_cosine": round(max_val, 4),
@@ -1034,8 +1321,8 @@ async def _determine_sign_smart(
             "confident": True,  # manual sign is always treated as confident
         }
     
-    # "auto" = spread clear + max_cosine above threshold в†’ sign is reliable
-    # "weak_auto" = spread shows a winner but max_cosine is low в†’ sign is a
+    # "auto" = spread clear + max_cosine above threshold -> sign is reliable
+    # "weak_auto" = spread shows a winner but max_cosine is low -> sign is a
     #   relative best-guess. Semantic bridges to this sign's core are NOT blocked,
     #   because the domain identity is uncertain. User should either confirm the
     #   sign manually or let bridges propose cross-domain links.
@@ -1068,7 +1355,7 @@ def _check_hierarchy_strict(entity_type: str, parents: List[Dict]) -> List[Dict]
             errors.append({
                 "type": "level_error",
                 "entity": p.get("entity", ""),
-                "message": f"Parent level {p_level} >= Child level {entity_level} вЂ” reversed hierarchy"
+                "message": f"Parent level {p_level} >= Child level {entity_level} -- reversed hierarchy"
             })
         elif entity_level - p_level > 1:
             errors.append({
@@ -1088,6 +1375,15 @@ def _determine_type(content: str, meta: Dict) -> str:
 
 def _check_hierarchy(entity_type: str, parents: List[Dict]) -> List[Dict]:
     return RULE["hierarchy_check"](entity_type, parents)
+
+def _get_level_from_meta(meta: Dict[str, Any], default: int = 5) -> int:
+    level_val = meta.get("level", default)
+    if level_val is None or level_val == "":
+        return default
+    try:
+        return int(level_val)
+    except (ValueError, TypeError):
+        return default
 
 async def _suggest_metadata_impl(
     content: str, context: Dict, db_path: str, file_path: str = ""
@@ -1122,9 +1418,32 @@ async def _suggest_metadata_impl(
     sign_auto = sign_result["sign_auto"]
     sign_source = sign_result["source"]
 
+    tag_bridges = []
+    analogy_bridges = []
     if vec and file_path and RULE["semantic_bridges"]:
         semantic_bridges = await _find_semantic_bridges(
             db_path, str(file_path), actual_sign, vec, own_sign_source=sign_source
+        )
+        if tags:
+            tag_bridges = await _find_tag_bridges(db_path, str(file_path), tags, actual_sign)
+
+    if file_path and RULE["semantic_bridges"]:
+        own_core_mix = None
+        own_tags_set = set(tags) if tags else set()
+        own_level_int = _get_level_from_meta(meta)
+        try:
+            async with aiosqlite.connect(db_path) as _db:
+                async with _db.execute(
+                    'SELECT core_mix FROM files WHERE path = ?', (str(file_path),)
+                ) as _cur:
+                    _cm_row = await _cur.fetchone()
+            if _cm_row and _cm_row[0]:
+                own_core_mix = json.loads(_cm_row[0])
+        except Exception:
+            pass
+        analogy_bridges = await _find_analogy_bridges(
+            db_path, str(file_path), actual_sign, own_level_int,
+            own_core_mix, own_tags_set
         )
 
     errors = _check_hierarchy(type_, parents_obj)
@@ -1158,6 +1477,12 @@ async def _suggest_metadata_impl(
         "semantic_bridges": [
             {**b, "proposed": True} for b in semantic_bridges
         ],
+        "tag_bridges": [
+            {**b, "proposed": True} for b in tag_bridges
+        ],
+        "analogy_bridges": [
+            {**b, "proposed": True} for b in analogy_bridges
+        ],
     }
 
     if content and RULE["reference_vectors"]:
@@ -1187,7 +1512,7 @@ async def _suggest_metadata_impl(
                         entity_name = meta.get("type", "entity")
                         warnings.append({
                             "type": "core_drift",
-                            "message": f"{entity_name} sign={actual_sign!r} (Intent), РЅРѕ СЃРѕРґРµСЂР¶РёРјРѕРµ РїСЂРµРёРјСѓС‰РµСЃС‚РІРµРЅРЅРѕ {leading_core} ({pct}%) вЂ” СЂР°СЃС…РѕР¶РґРµРЅРёРµ Р·Р°РјС‹СЃР»Р° Рё СЂРµР°Р»СЊРЅРѕСЃС‚Рё."
+                            "message": f"{entity_name} sign={actual_sign!r} (Intent), but content is predominantly {leading_core} ({pct}%) -- drift between intent and reality."
                         })
         except Exception:
             pass
@@ -1236,44 +1561,122 @@ def _resolve_entity_meta(entity: str) -> Dict[str, str]:
             if raw.startswith("---"):
                 end = raw.find("\n---\n", 4)
                 m = yaml.safe_load(raw[4:end]) or {}
+                sign_val = m.get("sign", "")
+                if sign_val is None:
+                    sign_val = ""
                 return {
-                    "sign": str(m.get("sign", "")),
+                    "sign": str(sign_val).strip(),
                     "type": str(m.get("type", "")).strip().lower(),
                     "level": str(m.get("level", "")),
                 }
         except Exception:
             pass
 
-    signs = "".join(ch for ch in entity if ch in CORE_SIGNS)
+    all_known_signs = CORE_SIGNS.union({"Ψ", "Δ", "Σ", "σ", "β", "δ", "ζ", "λ", "μ", "φ"})
+    signs = "".join(ch for ch in entity if ch in all_known_signs)
     return {"sign": signs, "type": "", "level": ""}
 
 async def format_entity_compact(meta: Dict[str, Any], db_path: str = "") -> str:
-    children_signs = []
+    """Format entity formula showing link types: (children)[entity]{parents}"""
+    children_by_link: Dict[str, List[Dict]] = {}
+    
     if db_path:
         file_path = meta.get("path", "")
         if file_path:
-            db_children = await _get_db_children(db_path, file_path)
-            for cp in db_children:
-                em = _resolve_entity_meta(Path(cp).stem)
-                if em.get("sign"):
-                    children_signs.append(em["sign"])
+            async with aiosqlite.connect(db_path) as db:
+                async with db.execute(
+                    'SELECT child_path, link_type FROM links WHERE parent_path = ?',
+                    (file_path,)
+                ) as cur:
+                    rows = await cur.fetchall()
+                
+                for child_path, link_type in rows:
+                    child_name = Path(child_path).stem
+                    child_meta = _resolve_entity_meta(child_name)
+                    child_sign = child_meta.get("sign", "")
+                    child_level = _get_level_from_meta(child_meta)
                     
-    children_str = f"({', '.join(children_signs)})" if children_signs else "()"
+                    if link_type not in children_by_link:
+                        children_by_link[link_type] = []
+                    children_by_link[link_type].append({
+                        "path": child_path,
+                        "sign": child_sign,
+                        "level": child_level
+                    })
+    
+    children_parts = []
+    for link_type in ["hierarchy", "semantic", "analogy", "temporary", "error"]:
+        if link_type not in children_by_link:
+            continue
+            
+        items = children_by_link[link_type]
+        sign_counts: Dict[str, int] = {}
+        for item in items:
+            sign = item.get("sign", "")
+            if sign:
+                sign_counts[sign] = sign_counts.get(sign, 0) + 1
+        
+        if not sign_counts:
+            continue
+            
+        parts = []
+        for sign, count in sign_counts.items():
+            sign_str = f"{count}{sign}" if count > 1 else sign
+            parts.append(sign_str)
+        
+        link_tag = f"{link_type[0]}:" if link_type != "hierarchy" else ""
+        children_parts.append(f"({link_tag}{''.join(parts)})")
+    
+    children_str = "".join(children_parts) if children_parts else "()"
     
     own_sign = str(meta.get("sign", "")).strip()
+    own_level = _get_level_from_meta(meta)
     entity_str = f"[{own_sign}]"
     
-    parents_signs = []
+    parents_by_link: Dict[str, List[Dict]] = {}
     yaml_parents = _get_parents_meta(meta)
     if yaml_parents:
         for p in yaml_parents:
             if isinstance(p, dict):
                 p_entity = p.get("entity", "")
-                pm = _resolve_entity_meta(p_entity)
-                if pm.get("sign"):
-                    parents_signs.append(pm["sign"])
-                    
-    parents_str = f"{{{', '.join(parents_signs)}}}" if parents_signs else "{}"
+                p_link_type = p.get("link_type", "hierarchy")
+                
+                parent_meta = _resolve_entity_meta(p_entity)
+                p_sign = parent_meta.get("sign", "")
+                p_level = _get_level_from_meta(parent_meta)
+                
+                if p_link_type not in parents_by_link:
+                    parents_by_link[p_link_type] = []
+                parents_by_link[p_link_type].append({
+                    "entity": p_entity,
+                    "sign": p_sign,
+                    "level": p_level
+                })
+    
+    parents_parts = []
+    for link_type in ["hierarchy", "temporary", "semantic", "analogy", "error"]:
+        if link_type not in parents_by_link:
+            continue
+            
+        items = parents_by_link[link_type]
+        sign_counts: Dict[str, int] = {}
+        for item in items:
+            sign = item.get("sign", "")
+            if sign:
+                sign_counts[sign] = sign_counts.get(sign, 0) + 1
+        
+        if not sign_counts:
+            continue
+            
+        parts = []
+        for sign, count in sign_counts.items():
+            sign_str = f"{count}{sign}" if count > 1 else sign
+            parts.append(sign_str)
+        
+        link_tag = f"{link_type[0]}:" if link_type != "hierarchy" else ""
+        parents_parts.append(f"{{{link_tag}{''.join(parts)}}}")
+    
+    parents_str = "".join(parents_parts) if parents_parts else "{}"
     
     return f"{children_str}{entity_str}{parents_str}"
 
@@ -1296,6 +1699,8 @@ async def _recalc_signs(db_path: str, dry_run: bool = False) -> Dict[str, Any]:
     updates = []
     for path, content in rows:
         if not content:
+            continue
+        if _is_meta_root(path):
             continue
         sign_result = await _determine_sign_smart(content, {"sign": ""}, db_path)
         actual_sign = sign_result["actual_sign"]
@@ -1323,6 +1728,8 @@ async def _recalc_core_mix(db_path: str) -> Dict[str, Any]:
     
     updates = []
     for path, level in rows:
+        if _is_meta_root(path):
+            continue
         if RULE["level_strict"]:
             child_level = (level or 0) - 1 if level else None
         else:
@@ -1359,6 +1766,9 @@ async def _index_all_files(db_path: str, with_embeddings: bool = False) -> Dict[
             data = await read_file_with_metadata(p)
             await _index_file(db_path, p, data)
             total += 1
+            # Meta-root (level 0) is indexed for graph visibility but never embedded
+            if _is_meta_root(p):
+                continue
             if with_embeddings and data.get('content') and RULE["reference_vectors"]:
                 if not await _embedding_is_fresh(db_path, str(p)):
                     vec = await _get_embedding(data['content'][:EMBED_MAX_CHARS])
@@ -1482,7 +1892,7 @@ async def run_server():
             types.Tool(
                 name="suggest_metadata",
                 description="Analyze a file's content and suggest metadata: type, sign, tags, semantic bridges, and hierarchy errors. "
-                            "Read-only вЂ” does not modify the file. Requires embeddings for semantic features (prizma/sloi modes). "
+                            "Read-only -- does not modify the file. Requires embeddings for semantic features (prizma/sloi modes). "
                             "Use this before write_file to validate or improve a note's classification. "
                             "Pass context to override specific frontmatter fields for what-if analysis.",
                 inputSchema={
@@ -1512,7 +1922,7 @@ async def run_server():
                 description="Scan all markdown files in the vault and index them into the SQLite database. "
                             "Reports orphaned parent links. Set with_embeddings=true to also compute/update vector embeddings "
                             "(requires embedding provider; skips files whose embeddings are already fresh). "
-                            "Run this after adding or reorganizing notes. Safe to re-run вЂ” idempotent.",
+                            "Run this after adding or reorganizing notes. Safe to re-run -- idempotent.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1528,7 +1938,7 @@ async def run_server():
                     name="suggest_parents",
                     description="Find semantically similar notes by vector cosine similarity and suggest them as potential parent links. "
                                 "Returns top_n candidates ranked by similarity score, with same-core matches prioritized. "
-                                "Read-only вЂ” does not modify any files. Requires embeddings (prizma/sloi modes). "
+                                "Read-only -- does not modify any files. Requires embeddings (prizma/sloi modes). "
                                 "Use this to discover hierarchy links for orphan notes; use suggest_metadata for broader classification.",
                     inputSchema={
                         "type": "object",
@@ -1562,7 +1972,7 @@ async def run_server():
                 types.Tool(
                     name="recalc_signs",
                     description="Reclassify all indexed files by computing their sign_auto from content embeddings vs core etalon vectors. "
-                                "Updates sign_auto and sign_source columns in the DB only вЂ” does not modify YAML files. "
+                                "Updates sign_auto and sign_source columns in the DB only -- does not modify YAML files. "
                                 "Use dry_run=true to preview changes without writing. "
                                 "Run after calibrate_cores or after adding new notes. Not available in luca mode.",
                     inputSchema={

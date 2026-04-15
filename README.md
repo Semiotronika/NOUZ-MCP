@@ -1,67 +1,53 @@
-# NOUZ — Semantic Knowledge Graph for Obsidian
+# NOUZ — Семантический движок знаний для Obsidian
 
-> One server. Three approaches. Your notes find their own place in the graph.
+> Структура возникает из содержания.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![MCP](https://img.shields.io/badge/protocol-MCP_stdio-lightgrey.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/badge/pypi-nouz--mcp-orange.svg)](https://pypi.org/project/nouz-mcp/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19595850.svg)](https://doi.org/10.5281/zenodo.19595850)
 
 ---
 
-## Why NOUZ?
+## Что такое NOUZ
 
-You write in Obsidian. A lot. Over time your vault turns into a mess — hundreds of notes connected somehow, with no system or logic.
+MCP-сервер для Obsidian, который даёт ИИ-агенту инструменты для осмысленной работы с базой знаний. Не просто файловая система с поиском — семантическое многомерное пространство, в котором агент видит структуру, понимает принадлежность каждой заметки к доменам и находит нетривиальные связи между идеями.
 
-NOUZ fixes this. It reads your notes, analyzes the content, and **builds the knowledge graph itself** — what belongs where, what "sign" each note has, where the semantic connections between different branches are.
+В основе — векторные эмбеддинги, косинусное сходство и коррекция анизотропии трансформеров. Всё это работает локально.
 
-No API keys needed. NOUZ works with your own embedding model.
+### Научные основы
 
----
+- **Mean subtraction** — удаление анизотропии эмбеддингов ([Su et al., 2021](https://arxiv.org/abs/2103.15343); Ethayarajh, 2019)
+- **Двунаправленная причинность** — sign сверху вниз, core_mix снизу вверх; формализация у [Ellis, 2024](https://doi.org/10.1007/s10701-024-00756-6)
+- **core_drift** — сигнал рассогласования, аналог ошибки предсказания в [предиктивном кодировании](https://en.wikipedia.org/wiki/Predictive_coding) (Friston, 2010)
+- **Аналогические мосты** — структурный изоморфизм, вдохновлён [теорией структурного отображения](https://en.wikipedia.org/wiki/Structure-mapping_theory) (Gentner, 1983)
 
-## What NOUZ Does
-
-### Builds the Graph
-
-Add `parents:` to a note — and NOUZ automatically places it in the hierarchy. No manual folder sorting.
-
-### Classifies by Content
-
-Using embeddings (local model), NOUZ understands what the note is about and assigns it a "sign" — T (technology), S (science), H (humanities) or any other you define.
-
-### Finds Hidden Connections
-
-Notes from different branches can be semantically close. NOUZ finds these bridges and suggests linking them.
-
-### Tracks Knowledge Drift
-
-Over time the content of a branch changes. NOUZ shows when the actual composition of notes diverges from the declared topic — this is `core_drift`, a signal that the branch has grown beyond its domain.
+Подробное изложение: [Рекурсивная самоорганизация как универсальный принцип](https://doi.org/10.5281/zenodo.19595850) — междисциплинарная модель, из которой вытекают архитектурные решения NOUZ.
 
 ---
 
-## Three Modes for Different Tasks
+## Кому это нужно
 
-| Mode | What It Does | Embeddings? |
-|-------|------------|-------------|
-| **LUCA** | Pure graph — only links and hierarchy | ❌ |
-| **PRIZMA** | Full semantics — classification, bridges, drift | ✅ |
-| **SLOI** | Strict 5-level hierarchy with control | ✅ |
+Всем, кто хочет автоматически структурировать свою базу. А ещё:
 
-Start with **LUCA** — just connect and add links. Move to PRIZMA or SLOI when you want semantics.
+| **Научные деятели**     | Для междисциплинарных исследований                 |
+| ----------------------- | -------------------------------------------------- |
+| **AI-инженеры**         | Семантическая память для агентов, RAG-пайплайны    |
+| **Системные мыслители** | Делают неявную структуру явной и отслеживают дрейф |
 
 ---
 
-## Quick Start
+## Быстрый старт
 
 ```bash
-# Install via PyPI (recommended)
 pip install nouz-mcp
-
-# Run
 OBSIDIAN_ROOT=/path/to/vault nouz-mcp
 ```
 
-Or from source:
+Без `config.yaml` сервер запускается в режиме **LUCA** — граф без семантики, работает сразу.
+
+Или из исходников:
 
 ```bash
 git clone https://github.com/KVANTRA-dev/NOUZ-MCP
@@ -70,7 +56,7 @@ pip install -r requirements.txt
 OBSIDIAN_ROOT=./vault python server.py
 ```
 
-Connect to Claude Desktop, Cursor, Opencode, or any other MCP client:
+Подключение к Claude Desktop, Cursor, Opencode или любому MCP-клиенту:
 
 ```json
 {
@@ -89,297 +75,271 @@ Connect to Claude Desktop, Cursor, Opencode, or any other MCP client:
 
 ---
 
-## How It Works
+## Как это работает
 
-### 1. You Write a Note
+### Ядра и призма
 
-```yaml
----
-type: module
-level: 3
-sign: T
-parents:
-  - Machine Learning
----
+Сначала вы описываете домены своей базы — минимум два, обычно три-четыре. Не список ключевых слов, а связный текст: что это за область, чем она занимается, чем отличается от других. Сервер превращает эти тексты в векторы-эталоны (`calibrate_cores`) и сохраняет их в SQLite.
 
-Your note here.
+Дальше каждая заметка проецируется на эти векторные оси. Агент видит вашу базу через призму ядер — не потому что нашёл ключевое слово, а потому что смысловое пространство структурировано.
+
+Примеры ядер: Физика / Технология / Гуманитарные науки. Или: Клиентский опыт / Архитектура / Бизнес-модель. Область применения не ограничена.
+
+### Типы сущностей
+
+Каждая заметка в графе — сущность. Тип определяет её роль в иерархии:
+
+**Ядро (L1)** — корень домена. Создаётся вручную, знак задаётся вручную. Якорь, от которого растёт ветка.
+
+**Паттерн (L2)** — область знаний внутри ядра. Знак задаётся вручную как намерение. Может получить второй знак, если содержание тянет к другому домену.
+
+**Модуль (L3)** — функциональная группировка. Наследует знак от родительского паттерна по иерархической связи.
+
+**Квант (L4)** — атомарная единица знаний. Одна идея, один концепт — но развитая и самодостаточная. Знак рассчитывается автоматически по содержимому. Если квант про нейросети живёт в модуле про системное мышление, его знак отразит реальное содержание, а не положение в дереве. Это не ошибка системы — мысль действительно может жить на стыке доменов.
+
+**Артефакт (L5)** — след деятельности. Лог, черновик, референс, инструкция. Прикрепляется к любому уровню через иерархическую или временную связь.
+
+### Знак: намерение vs реальность
+
+Знак (sign) — символ домена, к которому принадлежит заметка. Один или составной: `TS`, `SH`.
+
+```
+sign (Намерение): L1 → L2 → L3 сверху вниз, задаётся человеком
+core_mix (Реальность): L4 → L3 → L2 снизу вверх, считается автоматически
 ```
 
-### 2. NOUZ Builds the Graph
+`core_mix` — агрегированный состав ядер по всем дочерним заметкам снизу вверх. Когда sign и core_mix расходятся, возникает `core_drift`. Это не ошибка — сигнал: «Этот модуль заявлен как T, но 45% контента — S. Стоит пересмотреть структуру?»
 
-- Reads YAML → builds DAG (directed acyclic graph)
-- Vectorizes text → calculates proximity to your cores
-- Proposes sign, level, parents
-- Finds bridges to other branches
+Механизм аналогичен предиктивному кодированию: верхние уровни иерархии задают ожидания, нижние возвращают сигнал рассогласования.
 
-### 3. Structure Emerges from Content
+### Три режима работы
 
-```
-T (core)
- ├── TH (pattern: AI)
- │   ├── TH (module: ML)
- │   │   ├── TH (quant: neural-networks.md) — T
- │   │   └── TS (quant: transformers.md) — T
- │   └── TH (module: Ethics)
- │       └── TH (quant: ai-safety.md) — T
- └── TS (pattern: Physics)
-     └── ...
-```
+| Режим | Граф | Семантика | Иерархия |
+| --- | --- | --- | --- |
+| **LUCA** | ✅ | ❌ | Свободная, без проверок |
+| **PRIZMA** | ✅ | ✅ Ядра, мосты, drift | Свободная, без проверок |
+| **SLOI** | ✅ | ✅ | Строгая 5-уровневая |
 
-The more you write — the smarter your knowledge base becomes, and the agent working with NOUZ.
+**LUCA** — чистый граф. Только структура, которую вы задаёте вручную. Никаких эмбеддингов, никаких эталонов. Подходит для начала: выстроить иерархию, провести связи, понять форму базы. Работает без `config.yaml`.
+
+**PRIZMA** — граф плюс семантика. Сервер начинает «видеть»: классифицирует заметки по ядрам, находит мосты между доменами, отслеживает дрейф. Уровни используются для удобства, строгое соблюдение необязательно. Рекомендуемый режим для большинства задач.
+
+**SLOI** — всё то же, плюс строгая иерархия. Если L4-заметка помещена под L2-родителем — это ошибка, и сервер скажет об этом. Для тех, кому важна чистота структуры.
 
 ---
 
-## How Classification Works
+## Связи
 
-### Cores — Coordinate Axes
+Связи в NOUZ — осознанный выбор: зачем одна заметка ссылается на другую.
 
-In `config.yaml` you define 2–5 domains as text descriptions. The server converts them into reference vectors — **coordinate axes** in the multidimensional embedding space.
+| Тип | Кто создаёт | Смысл |
+| --- | --- | --- |
+| `hierarchy` | Только человек | Структурное решение. По этой связи передаётся sign. |
+| `temporary` | Человек или ИИ | Артефакт ещё не прирос к графу. Позже станет `hierarchy` — или уйдёт. |
+| `semantic` | ИИ предлагает, человек решает | Две заметки из разных доменов говорят об одном и том же. |
+| `tag` | ИИ предлагает, человек решает | Заметки делят скрытый концепт, хотя полные тексты разные. |
+| `analogy` | ИИ предлагает, человек решает | Заметки занимают аналогичную позицию в структуре графа, несмотря на разное содержание. |
+
+### Семантические мосты
+
+Две заметки из разных ядер, чьи тексты семантически близки. Заметка про термодинамическую энтропию и заметка про сжатие данных — обе про эффективность кодирования информации, хотя домены разные. Агент находит это через косинусную близость полных эмбеддингов.
+
+```
+cosine(embed(A), embed(B)) ≥ 0.55 → семантический мост
+```
+
+Мост предлагается только между заметками из **разных** ядер. Если знак заметки определён уверенно (`sign_source = auto`), мосты к своему ядру не предлагаются — домен закрыт. Если знак слабый (`weak_auto`), мосты предлагаются в обе стороны: домен неопределён, и связи помогают разобраться.
+
+### Теговые мосты
+
+Заметки, чьи отдельные теги близки в пространстве эмбеддингов, хотя полные тексты разные. Тег «энтропия» близок к тегу «хаос» — но сами заметки могут быть о разном. Теговый мост выявляет скрытый концепт, который полный текст пропускает.
+
+```
+cosine(embed(tag_A), embed(tag_B)) ≥ 0.72 → теговый мост
+```
+
+Порог выше (0.72 vs 0.55), потому что короткие слова шумнее длинных текстов — baseline косинуса у них выше.
+
+### Аналогические мосты
+
+Заметки из разных ядер, которые занимают **аналогичную позицию** в графе. Разное содержание, похожая структурная роль.
+
+Сходство считается по четырём компонентам с весами:
+
+```
+core_mix angle     × 0.35
+level match        × 0.25
+degree similarity  × 0.20
+tag overlap        × 0.20
+─────────────────────────
+structural_sim ≥ 0.55 → аналогический мост
+```
+
+Вдохновлено [теорией структурного отображения](https://en.wikipedia.org/wiki/Structure-mapping_theory) (Gentner, 1983): аналогии — это отображения между реляционными структурами, а не поверхностное сходство.
+
+### Зачем три типа?
+
+Каждый тип ловит свой вид связи. Семантический — «заметки об одном и том же». Теговый — «делят скрытый концепт». Аналогический — «играют одну и ту же роль в структуре». Если два типа подтверждают связь — она надёжная. Один тип — слабый сигнал, но заслуживающий внимания.
+
+---
+
+## Уверенность знака
+
+Не все классификации одинаково надёжны. Сервер различает:
+
+```
+max_cosine ≥ confident_cosine → sign_source = "auto" (уверенный)
+max_cosine < confident_cosine → sign_source = "weak_auto" (относительная догадка)
+```
+
+**`auto`** — домен закрыт: мосты к своему ядру не предлагаются. Сервер уверен в принадлежности заметки.
+
+**`weak_auto`** — домен открыт: мосты предлагаются в обе стороны. Заметка ближе к одному ядру, но не уверенно — возможно, короткая, на нестандартном языке или действительно на стыке.
+
+**Порог по умолчанию — 0.6.** Для большинства моделей (e5, BGE, multilingual) это работает. Для nomic-embed (baseline 0.74–0.83) — поставьте 0.75. Для тесных доменов с высоким пересечением — можно опустить до 0.5.
+
+### Анизотропия и mean subtraction
+
+Трансформерные эмбеддинги имеют известную проблему: все векторы сжаты в узкий конус, и косинус между любыми двумя текстами завышен вне зависимости от их смысловой близости. Это свойство архитектуры, описанное в работах Gao et al. (2019) и Ethayarajh (2019).
+
+NOUZ применяет mean subtraction (Su et al., 2021): вычитает средний вектор эталонов из каждого вектора перед сравнением. Это убирает общий компонент — «конус» — не разрушая семантику. Результат виден в отчёте калибровки как `pairwise_cosine_centered`.
+
+---
+
+## Формула сущности
+
+`format_entity_compact` показывает позицию заметки в графе одной строкой:
+
+```
+(дети)[сущность]{родители}
+```
+
+Каждая скобка — это знаки сущностей в соответствующей роли. Пример:
+
+```
+(TS)[H]{S}
+```
+
+Читается: у заметки есть дочерние заметки с знаками T и S, сама она принадлежит домену H, её родитель — из домена S. По этой строке агент видит контекст заметки без чтения всего графа.
+
+---
+
+## Инструменты и зачем они нужны
+
+| Инструмент | Зачем нужен агенту |
+| --- | --- |
+| `suggest_metadata` | Главный инструмент. Говорит: какой знак, какой уровень, какие мосты, есть ли drift. Агент вызывает его перед записью — чтобы не гадать. |
+| `write_file` | Создать или обновить заметку с правильным YAML. Проверяет циклы в DAG перед записью. |
+| `read_file` | Прочитать заметку и её метаданные. Переиндексирует в БД — при следующем `suggest_metadata` данные актуальны. |
+| `calibrate_cores` | Векторизовать эталонные тексты ядер. Запускается один раз после настройки конфигурации или при изменении эталонов. |
+| `recalc_signs` | Пересчитать автоматические знаки всех заметок по эмбеддингам. Запускается после калибровки. |
+| `recalc_core_mix` | Пересчитать агрегацию снизу вверх: L4 → L3 → L2. Запускается после `recalc_signs`. |
+| `suggest_parents` | Найти родителей по семантической близости. Для заметок без родителей. |
+| `list_files` | Список файлов с фильтрами по уровню, знаку, подпапке. |
+| `get_children` / `get_parents` | Траверс графа вниз и вверх. |
+| `format_entity_compact` | Формула сущности — быстрый обзор позиции в графе. |
+| `index_all` | Полная переиндексация хранилища. После крупных изменений. |
+| `embed` | Получить вектор для любого текста. |
+
+### Типичный сценарий работы агента
+
+1. **Новая заметка.** Агент пишет текст → вызывает `suggest_metadata` → получает sign, level, мосты, drift-предупреждения → записывает с правильным YAML через `write_file`.
+
+2. **Сирота нашла дом.** Агент видит заметку без родителей → `suggest_parents` → предлагает связи → человек подтверждает.
+
+3. **Drift обнаружен.** `suggest_metadata` возвращает `core_drift` warning → «Модуль заявлен как T, но 45% контента — S. Пересмотреть структуру?»
+
+4. **Мост между мирами.** Агент видит, что квант про энтропию и квант про сжатие данных связаны семантическим мостом → предлагает связь → человек решает.
+
+---
+
+## Конфигурация
+
+Создайте `config.yaml` рядом с сервером:
 
 ```yaml
 mode: prizma
 
+# Необязательно: имя корневой заметки (исключается из семантических операций)
+meta_root: "Моя база знаний"
+
+# Описания доменов — пишите ЧТО это, а не перечисляйте ключевые слова
 etalons:
   - sign: T
-    name: Technology
-    text: "programming software architecture machine learning neural networks"
+    name: Технология
+    text: "программирование архитектура инфраструктура машинное обучение нейросети
+           алгоритмы фреймворки базы данных облачные вычисления"
   - sign: S
-    name: Science
-    text: "physics chemistry biology mathematics formal logic theorems"
+    name: Наука
+    text: "физика химия биология математика формальная логика теоремы космология
+           квантовая механика научная методология"
   - sign: H
-    name: Humanities
-    text: "philosophy psychology sociology history literature ethics"
-```
-
-**On core quality:** separation between cores matters more than description accuracy. After writing — run `calibrate_cores` and check `pairwise_cosine`. Values above 0.55 between any two cores means they're too similar and the classifier will confuse domains. This is analogous to orthogonal basis vectors: the more orthogonal — the more accurate the projection.
-
-### Sign Assignment
-
-For each note, its content vector is compared against all reference vectors:
-
-```
-scores     = {S: cosine(note, core_S), T: cosine(note, core_T), H: cosine(note, core_H)}
-spread     = max(scores) - min(scores)
-```
-
-If `spread < 0.05` — the note is equidistant from all cores, sign is undefined. This is not an error: the note genuinely belongs to multiple domains or its content is insufficient for classification.
-
-```
-adjusted   = {k: scores[k] - min(scores) for k in scores}
-percent    = {k: adjusted[k] / sum(adjusted) * 100 for k in adjusted}
-sign       = all domains where percent[k] >= 30%
-```
-
-If two domains score ≥ 30% — the sign is composite: `TS`, `SH`. This is not a contradiction, but a spectrum: the note lives on the border between domains.
-
-### Sign Inheritance
-
-The sign flows top-down through hierarchical links:
-
-```
-L1 core      ← defined manually, never changes
-L2 pattern   ← defined manually + embedding adds second sign (if ≥ 30%)
-L3 module    ← inherits sign from parent pattern
-L4 quant     ← hybrid: sign from L3 parent + embedding content
-L5 artifact  ← inherits sign from parent quant
-```
-
-Priority: `sign_manual (YAML) > sign_auto (embedding) > inherited`
-
-Manual sign in YAML is **never overwritten** automatically.
-
-### Sign Confidence: auto vs weak_auto
-
-Spread-normalization answers "which core is *relatively closer*". But it doesn't answer "how close is the note to this core in *absolute terms*".
-
-For this there's `confident_cosine` — a threshold on `max(cosine)`:
-
-```
-max_cosine >= confident_cosine → sign_source = "auto"      (confident sign)
-max_cosine < confident_cosine  → sign_source = "weak_auto" (relative sign)
-```
-
-**What this means in practice:**
-
-`weak_auto` occurs when the note has a relative winner among cores (spread is normal), but in absolute terms all cosines are low. This happens when:
-- The note is short or not written in the language of the cores
-- The cores don't cover the note's topic well
-- The embedding model isn't strong in this domain
-
-**Impact on semantic bridges:**
-
-This is where it matters. Semantic bridges are only proposed between notes with *different* signs — if signs match, they're assumed to be "the same area". But if the sign is `weak_auto` — this assumption is unreliable.
-
-```
-sign_source = "auto"      → sign is considered closed. Bridges to the same core are not proposed.
-sign_source = "weak_auto" → sign is open. Bridges to notes with the same core are still proposed.
-```
-
-This gives you a choice: either set the sign manually (close the domain), or let the system keep proposing connections from all directions.
-
-**Threshold tuning:**
-
-```yaml
-thresholds:
-  confident_cosine: 0.6  # for most models (e5, BGE, multilingual)
-  # confident_cosine: 0.75  # for nomic-embed (high baseline 0.74–0.83)
-```
-
-The higher the threshold — the stricter the confidence requirement, the more notes get `weak_auto`. Calibrate for your model.
-
----
-
-### core_mix — Reality Bottom-Up
-
-The sign flows top-down (intent). `core_mix` flows bottom-up (reality):
-
-```
-quant (L4) → updates core_mix of parent module (L3)
-module (L3) → aggregates into core_mix of parent pattern (L2)
-```
-
-Each module accumulates the averaged domain distribution of all its quants. When the declared sign (intent) diverges from `core_mix` (reality) — the system reports `core_drift`.
-
-This is not an error. It's information about how the knowledge base has evolved. A branch with `sign=T` can gradually accumulate 60% of notes about mathematics — and `core_drift` will show this.
-
-This bidirectional flow — top-down constraints and bottom-up evidence — mirrors the architecture of hierarchical predictive coding systems: upper levels set expectations, lower levels return discrepancies.
-
----
-
-## Semantic Bridges
-
-`suggest_metadata` returns candidates for cross-domain links. All bridges are marked with `proposed: true` and require explicit confirmation.
-
-**Algorithm:**
-
-```
-For note A (sign=S) and note B (sign=T):
-  if cosine(embed(A), embed(B)) >= 0.55 → propose link
-```
-
-Finds notes that are **semantically similar overall** but belong to different domains. A note about thermodynamic entropy and a note about data compression can have high embedding similarity — both are about efficient information encoding. The bridge detects that they're talking about the same thing from different angles.
-
-The 0.55 threshold is configurable in `config.yaml` via `semantic_bridge_threshold`.
-
----
-
-## Customize It
-
-```yaml
-mode: prizma
-
-etalons:
-  - sign: T
-    name: Technology & Engineering
-    text: "programming software architecture infrastructure machine learning neural networks
-           algorithms frameworks database cloud computing"
-  - sign: S
-    name: Science & Mathematics
-    text: "physics chemistry biology mathematics formal logic theorems cosmology quantum
-           mechanics research methodology"
-  - sign: H
-    name: Humanities & Arts
-    text: "philosophy psychology sociology history literature art culture ethics
-           cognitive science epistemology linguistics"
+    name: Гуманитаристика
+    text: "философия психология социология история литература искусство этика
+           когнитивные науки эпистемология лингвистика"
 
 thresholds:
-  sign_spread: 0.05           # minimum spread for classification
-  pattern_second_sign_threshold: 30.0  # second sign threshold (%)
-  semantic_bridge_threshold: 0.55      # semantic bridge threshold
+  sign_spread: 0.05                # минимальный разброс для классификации
+  confident_cosine: 0.6            # порог уверенности знака
+  pattern_second_sign_threshold: 30.0  # % порог для составных знаков
+  semantic_bridge_threshold: 0.55   # семантические мосты
+  structural_bridge_threshold: 0.55  # аналогические мосты
 ```
 
----
+**Качество эталонов важнее количества.** После записи запустите `calibrate_cores` и проверьте `pairwise_cosine_centered`. Значения выше 0.4 между разными ядрами означают, что эталоны семантически перекрываются — перепишите с более доменно-специфичным языком и меньшим количеством общих слов.
 
-## Tools
+| Переменная | По умолчанию | Описание |
+| --- | --- | --- |
+| `OBSIDIAN_ROOT` | `./obsidian` | Путь к хранилищу |
+| `MODE` | `luca` | `luca`, `prizma` или `sloi` |
+| `EMBED_PROVIDER` | `openai` | `openai`, `lmstudio`, `ollama`, `gigachat` |
+| `EMBED_API_URL` | `http://127.0.0.1:1234/v1` | Эндпоинт для эмбеддингов |
+| `EMBED_API_KEY` | *(пусто)* | API-ключ, если нужен |
+| `EMBED_MODEL` | *(пусто)* | Имя модели |
 
-### All Modes
+### Мета-корень
 
-| Tool | Description |
-|-----------|----------|
-| `read_file` | Read a note with YAML metadata |
-| `write_file` | Create or update a note |
-| `list_files` | List with filters by level, sign, subfolder |
-| `get_children` | Traverse DAG downwards (all children) |
-| `get_parents` | Traverse DAG upwards (parents) |
-| `index_all` | Reindex the entire vault |
-| `format_entity_compact` | Entity formula: `(children)[entity]{parents}` |
-
-### PRIZMA / SLOI
-
-| Tool | Description |
-|-----------|----------|
-| `calibrate_cores` | Vectorize core texts → reference vectors |
-| `recalc_signs` | Reclassify all notes by embeddings |
-| `recalc_core_mix` | Recalculate bottom-up aggregation |
-| `suggest_metadata` | Propose sign, level, semantic bridges |
-| `suggest_parents` | Find parents by semantic similarity |
-| `embed` | Get embedding vector for any text |
+Узел уровня 0 (`meta_root` в конфиге) — верхний якорь иерархии. Индексируется для видимости в графе, но исключён из всех семантических операций: эмбеддинги, sign, core_mix. Без него заметки первого уровня болтаются в пустоте.
 
 ---
 
-## Configuration
+## Приватность
 
-| Variable | Default | Description |
-|-----------|-------------|----------|
-| `OBSIDIAN_ROOT` | `./obsidian` | Path to the vault |
-| `MODE` | `luca` | Mode: `luca`, `prizma`, or `sloi` |
-| `EMBED_ENABLED` | `true` | Enable embeddings |
-| `EMBED_PROVIDER` | `openai` | Provider: `openai`, `lmstudio`, `ollama`, `gigachat` |
-| `EMBED_API_URL` | `http://127.0.0.1:1234/v1` | Endpoint for embeddings |
-| `EMBED_API_KEY` | `` | API key if required |
+| Компонент | Локально? |
+| --- | --- |
+| **Эмбеддинги** (LM Studio / Ollama) | ✅ Да |
+| **Ваши заметки** (сырые файлы) | ✅ Да |
+| **Сервер NOUZ** | ✅ Да |
+| **Контекст AI-агента** (Claude, ChatGPT) | ❌ Уходит в облако |
 
----
-
-## Privacy: What Stays Local
-
-| Component | Local? |
-| -------------------------------------------------- | ----------------------- |
-| **Embeddings** (LM Studio / Ollama) | ✅ Yes |
-| **Your notes** (raw files) | ✅ Yes |
-| **NOUZ server** | ✅ Yes |
-| **AI agent context** (what the cloud model sees) | ❌ No — goes to the cloud |
-
-NOUZ runs locally. But when you connect a cloud AI agent (Claude, ChatGPT, etc.), the content it sees — including your notes — goes to that provider's cloud. This is outside NOUZ control.
-
-**Your choice:** use local agents or accept the trade-off.
+NOUZ работает полностью локально. Но если вы подключаете облачного агента — контекст, который он видит, уходит к провайдеру. Используйте локальных агентов, если приватность критична.
 
 ---
 
-## Who Is It For?
-
-| | |
-| ----------------------------- | -------------------------------------------------------------------- |
-| **Order lovers** | Want structure without spending time on manual organization |
-| **Researchers** | Gather lots of information and want to see connections |
-| **AI enthusiasts** | Building knowledge graphs for RAG or agent systems |
-| **Everyone with >100 notes** | When folders stop coping |
-
----
-
-## Development
+## Разработка
 
 ```bash
+git clone https://github.com/KVANTRA-dev/NOUZ-MCP
+cd NOUZ-MCP
 pip install -e .
+python -m pytest test_server.py
 ```
 
 ---
 
-## Links
+## Ссылки
 
-- 🌐 [Website](https://kvantra-dev.github.io/nouz/)
+- 🌐 [Сайт](https://kvantra.tech)
 - 📦 [PyPI](https://pypi.org/project/nouz-mcp/)
 - 🗂️ [Glama Registry](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP)
-- 💬 [Telegram: Volnaya Sreda](https://t.me/volnaya_sreda)
+- 💬 [Telegram](https://t.me/volnaya_sreda)
 - 🐙 [GitHub](https://github.com/KVANTRA-dev/NOUZ-MCP)
+- 📄 [Статья "Рекурсивная организация как универсальный принцип"](https://doi.org/10.5281/zenodo.19595850)
 
 ---
-
-**Structure emerges from content** — you just write.
 
 MIT License © 2026 KVANTRA
 
----
-
-*Cosines are calculated, syntax changes, semantics remains.*
+*Косинусы считаются. Синтаксис меняется. Семантика остаётся.*
 
 <!-- mcp-name: io.github.KVANTRA-dev/NOUZ-MCP -->

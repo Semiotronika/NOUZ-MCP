@@ -10,6 +10,7 @@ venv/
 
 # MCP servers
 .env
+.mcpregistry_*
 
 # IDE
 .idea/

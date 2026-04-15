@@ -10,6 +10,11 @@
 # - sloi: Strict 5-level hierarchy with semantic classification
 mode: prizma
 
+# Meta-root: level 0 anchor node. Created once manually, never touched by server.
+# Excluded from embeddings, sign calculation, core_mix, recalc_signs, recalc_core_mix.
+# Set to the filename (without .md) of your root note, e.g. "φ My Knowledge Base"
+meta_root: ""
+
 # Semantic etalons (optional) — for better semantic classification
 # You can start with just level/type in YAML, etalons are optional
 # Recommended: use distinct domains with low cosine similarity between them.
@@ -57,3 +62,8 @@ thresholds:
   # Minimum cosine similarity between two notes to propose a semantic bridge.
   # Only proposed between notes with different core signs (cross-domain links).
   semantic_bridge_threshold: 0.55
+
+  # Minimum structural similarity to propose an analogy bridge.
+  # Analogy bridges connect notes from different cores with similar graph positions
+  # (similar core_mix, level, degree, tags). Lower = more bridges, higher = stricter.
+  structural_bridge_threshold: 0.55
