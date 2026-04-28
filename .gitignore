@@ -1,14 +1,4 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-.venv/
-
-# Distribution
+# Distribution / Build
 dist/
 *.egg-info/
 
@@ -22,10 +12,6 @@ dist/
 *.swp
 *.swo
 
-# Build artifacts
-dist/
-*.egg-info/
-
 # Runtime data
 obsidian/
 *.db
@@ -33,10 +19,6 @@ obsidian/
 # OS
 .DS_Store
 Thumbs.db
-
-# Runtime
-obsidian/
-*.db
 
 # Local test with hardcoded paths
 test_server_quick.py
