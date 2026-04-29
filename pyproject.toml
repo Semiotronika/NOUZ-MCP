@@ -7,7 +7,7 @@ name = "nouz-mcp"
 version = "2.5.2"
 description = "MCP server for Obsidian — semantic knowledge graph with auto-classification, DAG hierarchy, and cross-domain bridge detection"
 readme = "README_EN.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     {name = "KVANTRA-dev", email = "belkinamariaigorevna@yandex.ru"}
@@ -17,7 +17,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
