@@ -67,7 +67,7 @@ def make_md(rel_path: str, content: str = "", **meta) -> Path:
 async def test_version():
     section("VERSION")
     try:
-        assert server.VERSION == "2.5.2", f"Expected 2.5.2, got {server.VERSION}"
+        assert server.VERSION == "2.5.3", f"Expected 2.5.3, got {server.VERSION}"
         ok(f"VERSION == {server.VERSION}")
     except AssertionError as e:
         fail("VERSION check", str(e))
