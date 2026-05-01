@@ -7,12 +7,12 @@
     "url": "https://github.com/Semiotronika/NOUZ-MCP",
     "source": "github"
   },
-  "version": "2.5.5",
+  "version": "2.5.6",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "nouz-mcp",
-      "version": "2.5.5",
+      "version": "2.5.6",
       "transport": {
         "type": "stdio"
       },

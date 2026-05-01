@@ -4,7 +4,7 @@ Works with Obsidian, Logseq, and any directory of Markdown files.
 
 > *Structure emerges from content.*
 
-A **Semiotronika** project — semantic tools for complex knowledge, research workflows, and AI agents.
+Semantic tools for knowledge bases, research workflows, and AI agents.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)

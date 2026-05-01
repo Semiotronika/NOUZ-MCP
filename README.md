@@ -4,7 +4,7 @@
 
 > *Структура появляется из содержания.*
 
-Проект **Семиотроники** — семантические инструменты для баз знаний, исследований и AI-агентов.
+Семантические инструменты для баз знаний, исследований и AI-агентов.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
