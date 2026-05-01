@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.KVANTRA-dev/NOUZ-MCP",
+  "name": "io.github.Semiotronika/NOUZ-MCP",
   "title": "Nouz",
   "description": "Semantic knowledge engine for Obsidian with auto-classification and DAG hierarchy",
   "repository": {
-    "url": "https://github.com/KVANTRA-dev/NOUZ-MCP",
+    "url": "https://github.com/Semiotronika/NOUZ-MCP",
     "source": "github"
   },
-  "version": "2.5.4",
+  "version": "2.5.5",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "nouz-mcp",
-      "version": "2.5.4",
+      "version": "2.5.5",
       "transport": {
         "type": "stdio"
       },

@@ -4,6 +4,8 @@ Works with Obsidian, Logseq, and any directory of Markdown files.
 
 > *Structure emerges from content.*
 
+A **Semiotronika** project — semantic tools for complex knowledge, research workflows, and AI agents.
+
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![MCP](https://img.shields.io/badge/protocol-MCP_stdio-lightgrey.svg)](https://modelcontextprotocol.io)
@@ -76,7 +78,7 @@ Copy-Item config.template.yaml config.yaml
 Or from source:
 
 ```bash
-git clone https://github.com/KVANTRA-dev/NOUZ-MCP
+git clone https://github.com/Semiotronika/NOUZ-MCP
 cd NOUZ-MCP
 pip install -r requirements.txt
 cp config.template.yaml config.yaml
@@ -239,7 +241,7 @@ Everything critical stays on your machine.
 ## Development
 
 ```bash
-git clone https://github.com/KVANTRA-dev/NOUZ-MCP
+git clone https://github.com/Semiotronika/NOUZ-MCP
 cd NOUZ-MCP
 pip install -e .
 python test_server.py
@@ -249,11 +251,11 @@ python test_server.py
 
 ## Links
 
-- 🌐 [kvantra.tech](https://kvantra.tech)
+- 🌐 [semiotronika.ru](https://semiotronika.ru)
 - 📦 [PyPI](https://pypi.org/project/nouz-mcp/)
-- 🗂️ [Glama Registry](https://glama.ai/mcp/servers/KVANTRA-dev/NOUZ-MCP)
+- 🗂️ [Glama Registry](https://glama.ai/mcp/servers/Semiotronika/NOUZ-MCP)
 - 💬 [Telegram](https://t.me/volnaya_sreda)
-- 🐙 [GitHub](https://github.com/KVANTRA-dev/NOUZ-MCP)
+- 🐙 [GitHub](https://github.com/Semiotronika/NOUZ-MCP)
 
 ## Research Context
 
@@ -261,8 +263,8 @@ NOUZ is an engineering MCP server; it does not require the theoretical material 
 
 ---
 
-MIT License © 2026 KVANTRA
+MIT License © 2026 Semiotronika
 
 *Cosines are computed. Syntax changes. Semantics remains.*
 
-<!-- mcp-name: io.github.KVANTRA-dev/NOUZ-MCP -->
+<!-- mcp-name: io.github.Semiotronika/NOUZ-MCP -->
