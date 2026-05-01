@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz -- Unified MCP Server for Obsidian. v2.5.3
+Nouz -- Unified MCP Server for Obsidian. v2.5.4
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -9,7 +9,7 @@ Three modes:
 - sloi: Strict 5-level hierarchy with semantic classification
 """
 
-VERSION = "2.5.3"
+VERSION = "2.5.4"
 
 import asyncio
 import hashlib
@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
 
 import aiofiles
-from frontmatter import Frontmatter
+import frontmatter
 import aiohttp
 import aiosqlite
 from mcp.server import Server
@@ -382,14 +382,28 @@ def _mean_center(vecs: Dict[str, List[float]]) -> Dict[str, List[float]]:
 # Files & YAML Processing
 # ============================================================================
 
+def _parse_frontmatter(raw: str) -> tuple[Dict[str, Any], str]:
+    """Parse Markdown YAML frontmatter with python-frontmatter or legacy frontmatter."""
+    if hasattr(frontmatter, "loads"):
+        post = frontmatter.loads(raw)
+        return dict(post.metadata), post.content
+
+    # Backward compatibility for the legacy `frontmatter` package.
+    legacy = getattr(frontmatter, "Frontmatter", None)
+    if legacy is not None:
+        result = legacy.read(raw)
+        return dict(result["attributes"]), result["body"]
+
+    raise RuntimeError("No supported frontmatter parser found")
+
 async def read_file_with_metadata(file_path: Path) -> Dict[str, Any]:
     try:
         async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
             raw = await f.read()
         try:
-            result = Frontmatter.read(raw)
-            meta = {k: _serialize(v) for k, v in result['attributes'].items()}
-            meta['content'] = result['body']
+            attrs, body = _parse_frontmatter(raw)
+            meta = {k: _serialize(v) for k, v in attrs.items()}
+            meta['content'] = body
         except Exception as fm_err:
             logger.warning(f"frontmatter parse error for {file_path.name}, using fallback: {fm_err}")
             meta = {"path": str(file_path), "content": raw, "frontmatter_error": str(fm_err)}
