@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 .test-tmp/
+.test_tmp/
 
 # MCP servers
 .env

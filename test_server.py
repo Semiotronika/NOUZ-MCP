@@ -15,7 +15,12 @@ import shutil
 from pathlib import Path
 
 # ── Setup test environment ──────────────────────────────────────────────────
-os.environ["OBSIDIAN_ROOT"] = tempfile.mkdtemp()
+TEST_TMP_PARENT = Path(__file__).parent / ".test-tmp"
+TEST_TMP_PARENT.mkdir(exist_ok=True)
+TEST_VAULT = TEST_TMP_PARENT / "vault"
+shutil.rmtree(str(TEST_VAULT), ignore_errors=True)
+TEST_VAULT.mkdir(parents=True, exist_ok=True)
+os.environ["OBSIDIAN_ROOT"] = str(TEST_VAULT)
 os.environ["MODE"] = "luca"
 os.environ["EMBED_ENABLED"] = "false"
 
@@ -67,7 +72,7 @@ def make_md(rel_path: str, content: str = "", **meta) -> Path:
 async def test_version():
     section("VERSION")
     try:
-        assert server.VERSION == "2.5.6", f"Expected 2.5.6, got {server.VERSION}"
+        assert server.VERSION == "3.0.0", f"Expected 3.0.0, got {server.VERSION}"
         ok(f"VERSION == {server.VERSION}")
     except AssertionError as e:
         fail("VERSION check", str(e))
@@ -176,40 +181,14 @@ async def test_dump_metadata_whitelist():
     except AssertionError as e:
         fail("_dump_metadata whitelist", str(e))
 
-
-async def test_strip_formula_html():
-    section("_strip_formula_html (remove <details> blocks)")
-
-    text_with_formula = 'Some content\n<details><summary>(3T2S)[TS]{H}</summary>extra</details>\nMore content'
+    metadata = {"type": "artifact", "level": 5, "sign": "B", "tags": "None", "parents": [], "parents_meta": []}
+    dumped = server._dump_metadata(metadata)
     try:
-        result = server._strip_formula_html(text_with_formula)
-        assert "<details>" not in result, "details tag not removed"
-        assert "</details>" not in result, "closing details tag not removed"
-        assert "(3T2S)" not in result, "formula content not removed"
-        assert "Some content" in result, "real content was removed"
-        assert "More content" in result, "real content was removed"
-        ok("<details> formula block stripped, content preserved")
+        assert "tags: None" not in dumped, dumped
+        assert "parents:" not in dumped, dumped
+        ok("None and empty YAML fields are omitted")
     except AssertionError as e:
-        fail("_strip_formula_html", str(e))
-
-    text_without_formula = "Just normal text\nNo formulas here"
-    try:
-        result = server._strip_formula_html(text_without_formula)
-        assert result == text_without_formula, "text without formula was modified"
-        ok("text without <details> passes through unchanged")
-    except AssertionError as e:
-        fail("_strip_formula_html passthrough", str(e))
-
-    text_multiple = 'A\n<details>block1</details>\nB\n<details>block2</details>\nC'
-    try:
-        result = server._strip_formula_html(text_multiple)
-        assert "<details>" not in result
-        assert "block1" not in result
-        assert "block2" not in result
-        assert "A" in result and "B" in result and "C" in result
-        ok("multiple <details> blocks all removed")
-    except AssertionError as e:
-        fail("_strip_formula_html multiple", str(e))
+        fail("_dump_metadata empty values", str(e))
 
 
 async def test_sync_parents_fields():
@@ -312,6 +291,27 @@ async def test_db_init():
         fail("init_db", str(e))
 
 
+async def test_default_db_path_env():
+    section("Database path configuration")
+
+    old_name = server.DATABASE_NAME
+    old_path = server.DATABASE_PATH
+    try:
+        server.DATABASE_PATH = ""
+        server.DATABASE_NAME = "obsidian_kb.public.db"
+        expected = os.path.join(server.OBSIDIAN_ROOT, "obsidian_kb.public.db")
+        assert server._default_db_path() == expected, "NOUZ_DATABASE_NAME was not applied"
+
+        server.DATABASE_PATH = str(TEST_ROOT / "custom.db")
+        assert server._default_db_path() == server.DATABASE_PATH, "NOUZ_DATABASE_PATH should take precedence"
+        ok("database name/path can be overridden for isolated public tests")
+    except AssertionError as e:
+        fail("_default_db_path", str(e))
+    finally:
+        server.DATABASE_NAME = old_name
+        server.DATABASE_PATH = old_path
+
+
 async def test_read_write_file():
     section("read_file / write_file")
 
@@ -348,6 +348,38 @@ async def test_read_write_file():
         ok("file indexed in DB correctly")
     except AssertionError as e:
         fail("DB index after write", str(e))
+
+
+async def test_read_plain_markdown_without_frontmatter_error():
+    section("read_file plain Markdown")
+
+    p = TEST_ROOT / "PlainRead.md"
+    body = "# Plain Read\n\nImported without YAML.\n"
+    p.write_text(body, encoding="utf-8")
+    data = await server.read_file_with_metadata(p)
+
+    try:
+        assert data.get("content") == body, "plain Markdown body was not preserved"
+        assert "frontmatter_error" not in data, f"plain Markdown should not warn: {data}"
+        ok("plain Markdown reads with empty metadata")
+    except AssertionError as e:
+        fail("read plain Markdown", str(e))
+
+
+async def test_read_markdown_starting_with_horizontal_rule():
+    section("read_file Markdown horizontal rule")
+
+    p = TEST_ROOT / "HorizontalRule.md"
+    body = "---\n\nText that starts with a Markdown separator, not YAML.\n"
+    p.write_text(body, encoding="utf-8")
+    data = await server.read_file_with_metadata(p)
+
+    try:
+        assert data.get("content") == body, "leading horizontal rule was mistaken for YAML"
+        assert "frontmatter_error" not in data, f"horizontal rule should not warn: {data}"
+        ok("leading Markdown separator is treated as content")
+    except AssertionError as e:
+        fail("read horizontal rule", str(e))
 
 
 async def test_parent_child_links():
@@ -393,6 +425,198 @@ async def test_parent_child_links():
         ok("_get_db_parents returns parent")
     except AssertionError as e:
         fail("_get_db_parents", str(e))
+
+
+async def test_write_preserves_body_by_default():
+    section("write_file_with_metadata preserves body by default")
+
+    p = TEST_ROOT / "PreserveBody.md"
+    body = "Intro\n\n## Links\nKeep this user section\n\npath: 'not a leak if user wrote it here'\n"
+    await server.write_file_with_metadata(
+        p,
+        body,
+        {"type": "artifact", "level": 5, "sign": "β"},
+        DB_PATH,
+    )
+    raw = p.read_text(encoding="utf-8")
+
+    try:
+        assert "## Links" in raw, "user section was removed"
+        assert "Keep this user section" in raw, "body content was changed"
+        assert "path: 'not a leak if user wrote it here'" in raw, "body line was removed"
+        ok("write_file_with_metadata does not clean body unless requested")
+    except AssertionError as e:
+        fail("body preserve default", str(e))
+
+
+async def test_recalc_keeps_l4_sign_separate_from_child_artifacts():
+    section("recalc keeps L4 sign separate from child artifacts")
+
+    await server.init_db(DB_PATH)
+    quant = TEST_ROOT / "CleanQuant.md"
+    artifact = TEST_ROOT / "ArtifactChild.md"
+
+    await server.write_file_with_metadata(
+        quant,
+        "quant body",
+        {"type": "quant", "level": 4, "sign": "S"},
+        DB_PATH,
+    )
+    await server.write_file_with_metadata(
+        artifact,
+        "artifact body",
+        {"type": "artifact", "level": 5, "sign": "B", "artifact_sign": "B", "parents": ["CleanQuant"]},
+        DB_PATH,
+    )
+
+    old_rule = server.RULE
+    old_core_signs = server.CORE_SIGNS
+    old_determine_core = server._determine_core_by_embedding
+
+    async def fake_determine_core(content, db_path):
+        return {"above_threshold": ["S"], "confident": True, "percentages": {"S": 100.0}}
+
+    try:
+        server.RULE = {**server.RULE, "has_sign_auto": True, "reference_vectors": True, "core_mix": True}
+        server.CORE_SIGNS = {"S"}
+        server._determine_core_by_embedding = fake_determine_core
+        result = await server._recalc_signs(DB_PATH, dry_run=False)
+    finally:
+        server.RULE = old_rule
+        server.CORE_SIGNS = old_core_signs
+        server._determine_core_by_embedding = old_determine_core
+
+    data = await server.read_file_with_metadata(quant)
+    async with server.aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT sign, artifact_sign FROM files WHERE path = ?", (str(quant),)) as cur:
+            db_sign, db_artifact_sign = await cur.fetchone()
+
+    try:
+        assert result["updated"] >= 1, f"recalc did not process quant: {result}"
+        assert data["sign"] == "S", f"YAML sign changed unexpectedly: {data['sign']!r}"
+        assert db_sign == "S", f"child artifact entered DB sign: {db_sign!r}"
+        assert not db_artifact_sign, f"child artifact entered DB artifact_sign: {db_artifact_sign!r}"
+        ok("L4 child artifacts stay out of the entity sign")
+    except AssertionError as e:
+        fail("L4 sign separation invariant", str(e))
+
+
+async def test_process_orphans_accepts_plain_markdown():
+    section("process_orphans accepts plain Markdown without YAML")
+
+    await server.init_db(DB_PATH)
+    plain = TEST_ROOT / "PlainImport.md"
+    plain.write_text("# Plain Import\n\nText pasted from a document without frontmatter.\n", encoding="utf-8")
+    await server._index_all_files(DB_PATH, with_embeddings=False)
+
+    old_rule = server.RULE
+    old_core_signs = server.CORE_SIGNS
+    old_determine_core = server._determine_core_by_embedding
+
+    async def fake_determine_core(content, db_path):
+        return {"above_threshold": ["S"], "dominant": "S", "confident": True, "percentages": {"S": 100.0}}
+
+    try:
+        server.RULE = {**server.RULE, "has_sign_auto": True, "reference_vectors": False, "core_mix": True}
+        server.CORE_SIGNS = {"S"}
+        server._determine_core_by_embedding = fake_determine_core
+        preview = await server._process_orphans(DB_PATH, dry_run=True, auto_parents=False, limit=200)
+        applied = await server._process_orphans(DB_PATH, dry_run=False, auto_parents=False, limit=200)
+    finally:
+        server.RULE = old_rule
+        server.CORE_SIGNS = old_core_signs
+        server._determine_core_by_embedding = old_determine_core
+
+    data = await server.read_file_with_metadata(plain)
+
+    try:
+        assert preview["processed"] >= 1, f"plain Markdown was not detected: {preview}"
+        assert applied["processed"] >= 1, f"plain Markdown was not processed: {applied}"
+        assert data.get("level") == 5, f"default level should be L5 artifact: {data}"
+        assert data.get("sign"), f"metadata sign was not written: {data}"
+        assert data.get("content", "").startswith("# Plain Import"), "body content changed"
+        ok("plain Markdown import can be annotated by process_orphans")
+    except AssertionError as e:
+        fail("process_orphans plain Markdown", str(e))
+
+
+async def test_process_orphans_limit_applies_to_plain_markdown():
+    section("process_orphans limit applies to plain Markdown")
+
+    await server.init_db(DB_PATH)
+    for idx in range(3):
+        (TEST_ROOT / f"PlainLimit{idx}.md").write_text(f"plain import {idx}\n", encoding="utf-8")
+    await server._index_all_files(DB_PATH, with_embeddings=False)
+
+    old_rule = server.RULE
+    try:
+        server.RULE = {**server.RULE, "has_sign_auto": True, "reference_vectors": False}
+        result = await server._process_orphans(DB_PATH, dry_run=True, auto_parents=False, limit=2)
+    finally:
+        server.RULE = old_rule
+
+    try:
+        assert result["processed"] == 2, f"limit was ignored for plain Markdown: {result}"
+        ok("plain Markdown orphan batch respects limit")
+    except AssertionError as e:
+        fail("process_orphans plain limit", str(e))
+
+
+async def test_process_orphans_accepts_leading_horizontal_rule():
+    section("process_orphans accepts Markdown horizontal rule")
+
+    await server.init_db(DB_PATH)
+    plain = TEST_ROOT / "PlainRuleImport.md"
+    plain.write_text("---\n\nImported text after a Markdown separator.\n---\n", encoding="utf-8")
+    await server._index_all_files(DB_PATH, with_embeddings=False)
+
+    old_rule = server.RULE
+    try:
+        server.RULE = {**server.RULE, "has_sign_auto": True, "reference_vectors": False}
+        result = await server._process_orphans(DB_PATH, dry_run=False, auto_parents=False, limit=200)
+    finally:
+        server.RULE = old_rule
+
+    data = await server.read_file_with_metadata(plain)
+
+    try:
+        assert result["processed"] >= 1, f"horizontal-rule Markdown was not processed: {result}"
+        assert data.get("level") == 5, f"horizontal-rule Markdown did not get metadata: {data}"
+        assert data.get("content", "").startswith("---\n\nImported text"), "body horizontal rule was not preserved"
+        ok("Markdown separator import can be annotated")
+    except AssertionError as e:
+        fail("process_orphans horizontal rule", str(e))
+
+
+async def test_recalc_signs_keeps_l1_cores_manual():
+    section("recalc_signs keeps L1 cores manual")
+
+    await server.init_db(DB_PATH)
+    core = TEST_ROOT / "ManualCore.md"
+    await server.write_file_with_metadata(
+        core,
+        "core anchor body",
+        {"type": "core", "level": 1, "sign": "S"},
+        DB_PATH,
+    )
+
+    old_has_sign_auto = server.RULE["has_sign_auto"]
+    try:
+        server.RULE["has_sign_auto"] = True
+        result = await server._recalc_signs(DB_PATH, dry_run=False)
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT sign, sign_auto, sign_source FROM files WHERE path = ?", (str(core),)) as cur:
+                sign, sign_auto, sign_source = await cur.fetchone()
+
+        assert result["updated"] >= 0, f"unexpected recalc result: {result}"
+        assert sign == "S", f"L1 sign changed: {sign!r}"
+        assert sign_auto is None and sign_source is None, "L1 auto fields should stay empty"
+        ok("L1 core signs are not overwritten by recalc_signs")
+    except AssertionError as e:
+        fail("recalc_signs L1 skip", str(e))
+    finally:
+        server.RULE["has_sign_auto"] = old_has_sign_auto
 
 
 async def test_cycle_detection():
@@ -531,13 +755,21 @@ async def main():
     await test_safe_path()
     await test_dump_metadata()
     await test_dump_metadata_whitelist()
-    await test_strip_formula_html()
     await test_sync_parents_fields()
     await test_cosine()
     await test_mean_center()
     await test_db_init()
+    await test_default_db_path_env()
     await test_read_write_file()
+    await test_read_plain_markdown_without_frontmatter_error()
+    await test_read_markdown_starting_with_horizontal_rule()
     await test_parent_child_links()
+    await test_write_preserves_body_by_default()
+    await test_recalc_keeps_l4_sign_separate_from_child_artifacts()
+    await test_process_orphans_accepts_plain_markdown()
+    await test_process_orphans_limit_applies_to_plain_markdown()
+    await test_process_orphans_accepts_leading_horizontal_rule()
+    await test_recalc_signs_keeps_l1_cores_manual()
     await test_cycle_detection()
     await test_serialize()
     await test_list_files()

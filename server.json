@@ -7,12 +7,12 @@
     "url": "https://github.com/Semiotronika/NOUZ-MCP",
     "source": "github"
   },
-  "version": "2.5.6",
+  "version": "3.0.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "nouz-mcp",
-      "version": "2.5.6",
+      "version": "3.0.0",
       "transport": {
         "type": "stdio"
       },
@@ -27,6 +27,19 @@
         {
           "name": "NOUZ_CONFIG",
           "description": "Absolute path to config.yaml; if omitted, server looks in current working directory",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "NOUZ_DATABASE_NAME",
+          "description": "SQLite cache filename inside OBSIDIAN_ROOT",
+          "format": "string",
+          "isRequired": false,
+          "default": "obsidian_kb.db"
+        },
+        {
+          "name": "NOUZ_DATABASE_PATH",
+          "description": "Full SQLite cache path; takes precedence over NOUZ_DATABASE_NAME",
           "format": "string",
           "isRequired": false
         },

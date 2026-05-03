@@ -5,6 +5,9 @@
 # macOS/Linux: cp config.template.yaml config.yaml
 # Windows PowerShell: Copy-Item config.template.yaml config.yaml
 # By default, without config.yaml, the server runs in "luca" mode (pure graph).
+# Optional isolated SQLite cache for tests:
+#   NOUZ_DATABASE_NAME=obsidian_kb.public.db
+#   NOUZ_DATABASE_PATH=/absolute/path/to/custom.db
 
 # Mode: luca | prizma | sloi
 # - luca: Graph-based, no semantic classification (Default fallback)
@@ -81,11 +84,6 @@ thresholds:
   # Minimum cosine similarity between two notes to propose a semantic bridge.
   # Only proposed between notes with different core signs (cross-domain links).
   semantic_bridge_threshold: 0.55
-
-  # Minimum structural similarity to propose an analogy bridge.
-  # Analogy bridges connect notes from different cores with similar graph positions
-  # (similar core_mix, level, degree, tags). Lower = more bridges, higher = stricter.
-  structural_bridge_threshold: 0.55
 
   # Minimum cosine similarity to auto-link a file to a parent.
   # Used by process_orphans and add_entity when auto_parents=true.

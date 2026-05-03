@@ -12,7 +12,7 @@ import server  # noqa: E402
 
 
 def test_repository_wrapper_exposes_server_api():
-    assert server.VERSION == "2.5.6"
+    assert server.VERSION == "3.0.0"
     assert callable(server.run_server)
     assert callable(server.main)
     assert callable(server._dump_metadata)

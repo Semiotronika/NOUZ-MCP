@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz -- Unified MCP Server for Obsidian. v2.5.6
+Nouz -- Unified MCP Server for Obsidian. v3.0.0
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -9,7 +9,7 @@ Three modes:
 - sloi: Strict 5-level hierarchy with semantic classification
 """
 
-VERSION = "2.5.6"
+VERSION = "3.0.0"
 
 import asyncio
 import hashlib
@@ -70,7 +70,6 @@ DEFAULT_CONFIG = {
         "confident_spread": 60.0,
         "pattern_second_sign_threshold": 30.0,
         "semantic_bridge_threshold": 0.55,
-        "structural_bridge_threshold": 0.55,
         "parent_link_threshold": 0.55
     }
 }
@@ -187,7 +186,7 @@ def _is_meta_root(file_path) -> bool:
     return stem == META_ROOT_NAME or stem.endswith(META_ROOT_NAME)
 
 # ============================================================================
-# Colors for Entity Formula
+# Level type mapping
 # ============================================================================
 
 LEVEL_TO_TYPE = {
@@ -204,19 +203,15 @@ def _get_type_by_level(level: int) -> str:
 
 PATTERN_SECOND_SIGN_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("pattern_second_sign_threshold", 30.0))
 SEMANTIC_BRIDGE_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("semantic_bridge_threshold", 0.55)
-STRUCTURAL_BRIDGE_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("structural_bridge_threshold", 0.55))
 PARENT_LINK_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("parent_link_threshold", 0.55))
-
-# Link types visible in entity formula (format_entity_compact)
-VISIBLE_LINK_TYPES = {"hierarchy", "semantic", "temporary"}
-
 
 # ============================================================================
 # Environment & Paths
 # ============================================================================
 
 OBSIDIAN_ROOT = os.getenv("OBSIDIAN_ROOT", "./obsidian")
-DATABASE_NAME = "obsidian_kb.db"
+DATABASE_NAME = os.getenv("NOUZ_DATABASE_NAME", os.getenv("NOUZ_DB_NAME", "obsidian_kb.db"))
+DATABASE_PATH = os.getenv("NOUZ_DATABASE_PATH", os.getenv("NOUZ_DB_PATH", ""))
 
 EXCLUDED_DIRS = {
     "templates",
@@ -236,10 +231,18 @@ EMBED_API_URL = os.getenv("EMBED_API_URL", "http://127.0.0.1:1234/v1")
 EMBED_API_KEY = os.getenv("EMBED_API_KEY", "")
 EMBED_MAX_CHARS = 2000
 
-def _strip_formula_html(text: str) -> str:
-    """Remove <details>...</details> formula blocks from text before embedding."""
-    return re.sub(r'<details>.*?</details>\s*', '', text, flags=re.DOTALL)
+def _default_db_path() -> str:
+    """Return the active SQLite cache path for this server instance."""
+    if DATABASE_PATH:
+        return DATABASE_PATH
+    return os.path.join(OBSIDIAN_ROOT, DATABASE_NAME)
 
+def _db_path_to_file(path_str: str) -> Path:
+    """Resolve a path stored in SQLite back to a Markdown file path."""
+    p = Path(path_str)
+    if p.is_absolute() or p.exists():
+        return p
+    return Path(OBSIDIAN_ROOT) / p
 
 # ============================================================================
 # Logging & Cache
@@ -384,17 +387,29 @@ def _mean_center(vecs: Dict[str, List[float]]) -> Dict[str, List[float]]:
 
 def _parse_frontmatter(raw: str) -> tuple[Dict[str, Any], str]:
     """Parse Markdown YAML frontmatter with python-frontmatter or legacy frontmatter."""
-    if hasattr(frontmatter, "loads"):
-        post = frontmatter.loads(raw)
-        return dict(post.metadata), post.content
+    if not raw.startswith("---"):
+        return {}, raw
 
-    # Backward compatibility for the legacy `frontmatter` package.
-    legacy = getattr(frontmatter, "Frontmatter", None)
-    if legacy is not None:
-        result = legacy.read(raw)
-        return dict(result["attributes"]), result["body"]
+    lines = raw.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return {}, raw
+    close_idx = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            close_idx = idx
+            break
+    if close_idx is None:
+        return {}, raw
 
-    raise RuntimeError("No supported frontmatter parser found")
+    header = "".join(lines[1:close_idx])
+    if not re.search(r"(?m)^[A-Za-z_][A-Za-z0-9_-]*\s*:", header):
+        return {}, raw
+
+    body = "".join(lines[close_idx + 1:])
+    attrs = yaml.safe_load(header) or {}
+    if not isinstance(attrs, dict):
+        return {}, raw
+    return dict(attrs), body
 
 async def read_file_with_metadata(file_path: Path) -> Dict[str, Any]:
     try:
@@ -420,13 +435,24 @@ def _clean_content(content: str) -> str:
     content = re.sub(r'\n*## Иерархия(?:\s*\(для графа\))?\s*\n(?:\*\*Parents:\*\*.*?\n)?(?:\*\*Children:\*\*.*?\n)?', '', content, flags=re.DOTALL)
     content = re.sub(r'\n*## Links\s*\n(?:\*\*Parents:\*\*.*?\n)?(?:\*\*Children:\*\*.*?\n)?', '', content, flags=re.DOTALL)
     content = re.sub(r'\n*## Hierarchy\s*\n(?:\*\*Parents:\*\*.*?\n)?(?:\*\*Children:\*\*.*?\n)?', '', content, flags=re.DOTALL)
-    formula_blocks = list(re.finditer(r'<details>\s*\n<summary>\s*\*[^*]*(?:Структура|Structure)[^*]*\*\s*</summary>.*?</details>', content, re.DOTALL))
-    if len(formula_blocks) > 1:
-        for fb in formula_blocks[:-1]:
-            content = content[:fb.start()] + content[fb.end():]
     content = re.sub(r"^path:\s*['\"].*?['\"]\s*\n?", '', content, flags=re.MULTILINE)
     content = re.sub(r'^\s*---\s*\n', '', content)
     return content.strip()
+
+
+def _split_frontmatter_raw(raw: str) -> tuple[Dict[str, Any], str]:
+    """Return frontmatter metadata and body without changing the body text."""
+    raw_for_match = raw[1:] if raw.startswith("\ufeff") else raw
+    match = re.match(r'^---\r?\n(.*?)\r?\n---\r?\n?(.*)$', raw_for_match, re.DOTALL)
+    if not match:
+        return {}, raw
+    try:
+        fm = yaml.safe_load(match.group(1)) or {}
+        if not isinstance(fm, dict):
+            fm = {}
+    except Exception:
+        fm = {}
+    return fm, match.group(2)
 
 
 def _dump_metadata(metadata: Dict[str, Any]) -> str:
@@ -434,8 +460,24 @@ def _dump_metadata(metadata: Dict[str, Any]) -> str:
     # Internal fields (sign_source, sign_auto, color, core_mix, path, content, etc.) are not included.
     YAML_ALLOWED_KEYS = {'type', 'level', 'sign', 'artifact_sign', 'status', 'tags', 'parents', 'parents_meta'}
     KEY_ORDER = ['type', 'level', 'sign', 'artifact_sign', 'status', 'tags', 'parents', 'parents_meta']
-    ordered = {k: metadata[k] for k in KEY_ORDER if k in metadata and k in YAML_ALLOWED_KEYS}
-    ordered.update({k: v for k, v in metadata.items() if k in YAML_ALLOWED_KEYS and k not in KEY_ORDER})
+
+    def _has_yaml_value(value: Any) -> bool:
+        if value is None or value == []:
+            return False
+        if isinstance(value, str) and value.strip().lower() in {"none", "null"}:
+            return False
+        return True
+
+    ordered = {
+        k: metadata[k]
+        for k in KEY_ORDER
+        if k in metadata and k in YAML_ALLOWED_KEYS and _has_yaml_value(metadata[k])
+    }
+    ordered.update({
+        k: v
+        for k, v in metadata.items()
+        if k in YAML_ALLOWED_KEYS and k not in KEY_ORDER and _has_yaml_value(v)
+    })
     
     # artifact_sign only makes sense in YAML for L4 (composite sign)
     level_val = metadata.get("level", 5)
@@ -504,7 +546,14 @@ def _sync_parents_fields(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
     return meta
 
-async def write_file_with_metadata(file_path: Path, content: str, metadata: Dict[str, Any], db_path: str = "") -> tuple[bool, str]:
+async def write_file_with_metadata(
+    file_path: Path,
+    content: str,
+    metadata: Dict[str, Any],
+    db_path: str = "",
+    *,
+    clean_content: bool = False,
+) -> tuple[bool, str]:
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         synced = _sync_parents_fields(metadata)
@@ -523,13 +572,13 @@ async def write_file_with_metadata(file_path: Path, content: str, metadata: Dict
                                 return False, "cycle_detected"
         
         yaml_str = _dump_metadata(synced)
-        clean = _clean_content(content)
-        output = f"---\n{yaml_str}\n---\n{clean}"
+        body = _clean_content(content) if clean_content else content
+        output = f"---\n{yaml_str}\n---\n{body}"
         async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
             await f.write(output)
         
         if db_path:
-            await _index_file(db_path, file_path, {**synced, "content": clean})
+            await _index_file(db_path, file_path, {**synced, "content": body})
         
         return True, ""
     except Exception as e:
@@ -626,12 +675,24 @@ def _extract_artifact_sign_from_sign(sign: str) -> str:
     """
     return "".join(ch for ch in sign if ch in ARTIFACT_SIGNS)
 
+def _dedupe_sign_chars(sign: str) -> str:
+    """Dedupe sign characters while preserving their original order."""
+    result: List[str] = []
+    for ch in sign or "":
+        if ch not in result:
+            result.append(ch)
+    return "".join(result)
+
 def _extract_core_sign_from_sign(sign: str) -> str:
     """Extract core_sign portion from a composite sign.
     
-    Returns the core_sign characters (those in CORE_SIGNS).
+    Returns the core_sign characters. If no semantic core signs are configured
+    (for example in luca mode), treat every non-artifact sign character as a
+    structural/core sign so plain text signs keep user-defined domain characters.
     """
-    return "".join(ch for ch in sign if ch in CORE_SIGNS)
+    if CORE_SIGNS:
+        return "".join(ch for ch in sign if ch in CORE_SIGNS)
+    return "".join(ch for ch in sign if ch not in ARTIFACT_SIGNS)
 
 def _determine_artifact_sign(content: str, meta: Dict) -> str:
     """Determine artifact sign by content structure/heuristics — no embeddings needed.
@@ -698,7 +759,7 @@ async def _collect_artifact_sign_from_children(meta: Dict, db_path: str) -> str:
     
     Returns deduplicated artifact_sign characters (e.g., "σ" or "σλ").
     """
-    artifact_signs = set()
+    artifact_signs: List[str] = []
     path = meta.get("path", "")
     if not path or not db_path:
         return ""
@@ -714,21 +775,18 @@ async def _collect_artifact_sign_from_children(meta: Dict, db_path: str) -> str:
         for row in rows:
             child_path = row[0]
             try:
-                child_full = Path(OBSIDIAN_ROOT) / child_path
+                child_full = _db_path_to_file(child_path)
                 if not child_full.exists():
                     continue
-                raw = child_full.read_text(encoding="utf-8")
-                if raw.startswith("---"):
-                    end = raw.find("\n---\n", 4)
-                    if end > 0:
-                        fm = yaml.safe_load(raw[4:end]) or {}
-                        art_sign = fm.get("artifact_sign") or fm.get("sign", "")
-                        for ch in _extract_artifact_sign_from_sign(art_sign):
-                            artifact_signs.add(ch)
+                fm, _ = _split_frontmatter_raw(child_full.read_text(encoding="utf-8"))
+                art_sign = str(fm.get("artifact_sign") or fm.get("sign", ""))
+                for ch in _extract_artifact_sign_from_sign(art_sign):
+                    if ch not in artifact_signs:
+                        artifact_signs.append(ch)
             except Exception:
                 pass
     
-    return "".join(sorted(artifact_signs))
+    return "".join(artifact_signs)
 
 
 async def _find_temporary_anchor(content: str, db_path: str, level: int = 5) -> Optional[str]:
@@ -845,7 +903,9 @@ async def _find_orphaned_links(db_path: str) -> List[Dict[str, str]]:
 
 async def _index_file(db_path: str, file_path: Path, meta: Dict[str, Any]):
     parents_obj = _get_parents_meta(meta)
-    level = meta.get('level', 0)
+    level = meta.get('level')
+    if level == "":
+        level = None
     
     yaml_sign = str(meta.get('sign', '')).strip() if meta.get('sign') else ""
     
@@ -1092,9 +1152,9 @@ async def _find_tag_bridges(
     - Pink: cosine of full text -- "these notes are about the same thing"
     - Gray: cosine of individual tags -- "these notes share a hidden concept"
 
-    Example: note about thermodynamic entropy (sign S) and note about
-    technical debt (sign T) -- texts are different, but tag "entropy" is close
-    to tag "disorder" in embedding space -> gray bridge reveals the analogy.
+    Example: note about thermodynamic entropy and note about technical debt:
+    texts are different, but tag "entropy" can be close to tag "disorder"
+    in embedding space, so the bridge reveals a shared concept.
     """
     if not RULE["semantic_bridges"] or not own_tags:
         return []
@@ -1155,182 +1215,6 @@ async def _find_tag_bridges(
 
     bridges.sort(key=lambda x: -x["strength"])
     return bridges[:10]
-
-
-def _structural_similarity(profile_a: Dict, profile_b: Dict) -> float:
-    """Compute structural similarity between two graph node profiles.
-
-    Analogy bridges connect notes from DIFFERENT cores that share structural position.
-    This is NOT about semantic content -- it's about isomorphic roles in the graph.
-
-    Weights: core_mix angle (0.35) > level match (0.25) > degree similarity (0.20) > tag overlap (0.20)
-    """
-    score = 0.0
-    weights_used = 0.0
-
-    # 1. Core mix cosine: similar angle to dominating core
-    # Two notes from different cores but with similar core_mix proportions
-    # have analogous structural roles (e.g., S70%/D30% mirrors E70%/D30%)
-    if profile_a.get("core_mix") and profile_b.get("core_mix"):
-        keys = sorted(set(profile_a["core_mix"].keys()) | set(profile_b["core_mix"].keys()))
-        vec_a = [profile_a["core_mix"].get(k, 0.0) for k in keys]
-        vec_b = [profile_b["core_mix"].get(k, 0.0) for k in keys]
-        cos = _cosine(vec_a, vec_b)
-        score += cos * 0.35
-        weights_used += 0.35
-
-    # 2. Level match: same level = stronger analogy
-    level_a = profile_a.get("level", 0)
-    level_b = profile_b.get("level", 0)
-    if level_a and level_b:
-        level_diff = abs(level_a - level_b)
-        if level_diff == 0:
-            score += 1.0 * 0.25
-        elif level_diff == 1:
-            score += 0.5 * 0.25
-        weights_used += 0.25
-
-    # 3. Degree similarity (branching factor)
-    deg_a = max(profile_a.get("degree", 0), 1)
-    deg_b = max(profile_b.get("degree", 0), 1)
-    degree_sim = 1.0 - abs(deg_a - deg_b) / max(deg_a, deg_b)
-    score += degree_sim * 0.20
-    weights_used += 0.20
-
-    # 4. Tag Jaccard: exact tag overlap (not semantic -- structural)
-    tags_a = profile_a.get("tags", set())
-    tags_b = profile_b.get("tags", set())
-    if tags_a and tags_b:
-        intersection = tags_a & tags_b
-        union = tags_a | tags_b
-        jaccard = len(intersection) / len(union) if union else 0.0
-        score += jaccard * 0.20
-        weights_used += 0.20
-
-    return score / weights_used if weights_used > 0 else 0.0
-
-
-async def _find_analogy_bridges(
-    db_path: str, own_path: str, own_sign: str, own_level: int,
-    own_core_mix: Optional[Dict[str, float]], own_tags: Set[str],
-    threshold: float = None
-) -> List[Dict]:
-    """Find structural analogies between notes from DIFFERENT cores.
-
-    Analogy bridges connect notes that play similar roles in the graph
-    despite being about semantically different topics.
-    Example: neural networks (computing) <-> neural pathways (biology) -- similar graph structure.
-
-    Key insight: this is about structural isomorphism, not semantic similarity.
-    Two notes from different cores with similar core_mix proportions,
-    similar level, and similar degree occupy analogous positions in the DAG.
-    """
-    if not RULE["semantic_bridges"]:
-        return []
-
-    if threshold is None:
-        threshold = STRUCTURAL_BRIDGE_THRESHOLD
-
-    own_cores = set(ch for ch in own_sign if ch in CORE_SIGNS)
-    if not own_cores:
-        return []
-
-    # Fetch all files with their structural data in one query
-    async with aiosqlite.connect(db_path) as db:
-        async with db.execute(
-            'SELECT path, sign, sign_source, level, tags, core_mix FROM files'
-        ) as cur:
-            all_rows = await cur.fetchall()
-
-    # Get degree counts for all files in one query
-    degree_map = {}
-    async with aiosqlite.connect(db_path) as db:
-        # Children count
-        async with db.execute(
-            'SELECT parent_path, COUNT(*) FROM links WHERE link_type = "hierarchy" GROUP BY parent_path'
-        ) as cur:
-            child_rows = await cur.fetchall()
-        for parent_path, cnt in child_rows:
-            degree_map[parent_path] = degree_map.get(parent_path, 0) + cnt
-        # Parents count
-        async with db.execute(
-            'SELECT child_path, COUNT(*) FROM links GROUP BY child_path'
-        ) as cur:
-            parent_rows = await cur.fetchall()
-        for child_path, cnt in parent_rows:
-            degree_map[child_path] = degree_map.get(child_path, 0) + cnt
-
-    # Build own profile
-    own_profile = {
-        "level": own_level or 0,
-        "sign": own_sign,
-        "degree": degree_map.get(own_path, 0),
-        "core_mix": own_core_mix or {},
-        "tags": own_tags,
-    }
-
-    bridges = []
-    for path, sign, sign_source, level, tags_json, core_mix_json in all_rows:
-        if path == own_path:
-            continue
-
-        other_sign = sign or ""
-        # Must be from DIFFERENT cores (no overlap)
-        other_cores = set(ch for ch in other_sign if ch in CORE_SIGNS)
-        if not other_cores:
-            continue
-        if own_cores & other_cores:
-            continue
-
-        # Skip weak_auto signs -- they don't have reliable core assignment
-        if sign_source == "weak_auto":
-            continue
-
-        # Parse core_mix
-        try:
-            core_mix = json.loads(core_mix_json) if core_mix_json else {}
-        except Exception:
-            core_mix = {}
-
-        # Parse tags
-        try:
-            tag_list = json.loads(tags_json) if isinstance(tags_json, str) and tags_json else []
-        except Exception:
-            tag_list = []
-
-        candidate_profile = {
-            "level": level or 0,
-            "sign": other_sign,
-            "degree": degree_map.get(path, 0),
-            "core_mix": core_mix,
-            "tags": set(tag_list) if tag_list else set(),
-        }
-
-        similarity = _structural_similarity(own_profile, candidate_profile)
-
-        if similarity >= threshold:
-            # Build human-readable reason
-            reasons = []
-            if own_profile.get("core_mix") and candidate_profile.get("core_mix"):
-                a_mix = "/".join(f"{k}{v:.0f}%" for k, v in sorted(own_profile["core_mix"].items(), key=lambda x: -x[1]))
-                b_mix = "/".join(f"{k}{v:.0f}%" for k, v in sorted(candidate_profile["core_mix"].items(), key=lambda x: -x[1]))
-                reasons.append(f"mix: {a_mix} <-> {b_mix}")
-            if own_profile.get("level") and candidate_profile.get("level"):
-                if own_profile["level"] == candidate_profile["level"]:
-                    reasons.append(f"same level L{own_profile['level']}")
-            common_tags = own_profile.get("tags", set()) & candidate_profile.get("tags", set())
-            if common_tags:
-                reasons.append(f"shared tags: {', '.join(list(common_tags)[:3])}")
-
-            bridges.append({
-                "entity": Path(path).stem,
-                "link_type": "analogy",
-                "strength": round(similarity, 3),
-                "reason": f"structural analogy ({'; '.join(reasons)}), signs={own_sign}<->{other_sign}",
-            })
-
-    bridges.sort(key=lambda x: -x["strength"])
-    return bridges[:5]
 
 
 async def _load_reference_vectors(db_path: str) -> Dict[str, List[float]]:
@@ -1429,7 +1313,7 @@ async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, 
     if not RULE["reference_vectors"]:
         return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
     
-    vec = await _get_embedding(_strip_formula_html(content)[:EMBED_MAX_CHARS])
+    vec = await _get_embedding(content[:EMBED_MAX_CHARS])
     if not vec:
         return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
 
@@ -1585,7 +1469,7 @@ async def _determine_sign_smart(
     """Determine sign(s) based on entity level.
     
     L5 (artifact): artifact_sign by heuristic, no core_sign
-    L4 (quant): artifact_sign from parent artifacts + core_sign from embedding
+    L4 (quant): optional own artifact_sign + core_sign from embedding
     L1-L3 (core/pattern/module): only core_sign from embedding
     """
     if not RULE["has_sign_auto"]:
@@ -1621,9 +1505,9 @@ async def _determine_sign_smart(
         }
     
     elif level == 4:
-        # Quant: composite sign = artifact_sign (from child artifacts) + core_sign (from embedding)
-        # Collect artifact_sign from child artifacts (level=5)
-        artifact_sign = await _collect_artifact_sign_from_children(meta, db_path)
+        # Quant: composite sign = own artifact_sign + core_sign.
+        # Child artifact inventory belongs in DB aggregation/UI, not in YAML sign.
+        artifact_sign = str(meta.get("artifact_sign", "") or "")
         
         # Determine core_sign from embedding
         core_result = await _determine_core_by_embedding(content, db_path)
@@ -1631,7 +1515,6 @@ async def _determine_sign_smart(
         core_sign = "".join(above) if above else (list(CORE_SIGNS)[0] if CORE_SIGNS else "")
         confident = core_result.get("confident", False)
         
-        # Composite sign: artifact_sign + core_sign
         composite = artifact_sign + core_sign
         actual_sign = composite if composite else core_sign
         
@@ -1734,7 +1617,6 @@ async def _suggest_metadata_impl(
 
     semantic_bridges = []
     tag_bridges = []
-    analogy_bridges = []
     vec = []
     if file_path and RULE["reference_vectors"]:
         if not await _embedding_is_fresh(db_path, file_path):
@@ -1753,34 +1635,12 @@ async def _suggest_metadata_impl(
     sign_source = sign_result["source"]
     artifact_sign = sign_result.get("artifact_sign", "")
 
-    tag_bridges = []
-    analogy_bridges = []
     if vec and file_path and RULE["semantic_bridges"]:
         semantic_bridges = await _find_semantic_bridges(
             db_path, str(file_path), actual_sign, vec, own_sign_source=sign_source
         )
         if tags:
             tag_bridges = await _find_tag_bridges(db_path, str(file_path), tags, actual_sign)
-
-    # Analogy bridges: structural isomorphisms across different cores
-    if file_path and RULE["semantic_bridges"]:
-        own_core_mix = None
-        own_tags_set = set(tags) if tags else set()
-        own_level_int = _get_level_from_meta(meta)
-        try:
-            async with aiosqlite.connect(db_path) as _db:
-                async with _db.execute(
-                    'SELECT core_mix FROM files WHERE path = ?', (str(file_path),)
-                ) as _cur:
-                    _cm_row = await _cur.fetchone()
-            if _cm_row and _cm_row[0]:
-                own_core_mix = json.loads(_cm_row[0])
-        except Exception:
-            pass
-        analogy_bridges = await _find_analogy_bridges(
-            db_path, str(file_path), actual_sign, own_level_int,
-            own_core_mix, own_tags_set
-        )
 
     errors = _check_hierarchy(type_, parents_obj)
     
@@ -1816,9 +1676,6 @@ async def _suggest_metadata_impl(
         ],
         "tag_bridges": [
             {**b, "proposed": True} for b in tag_bridges
-        ],
-        "analogy_bridges": [
-            {**b, "proposed": True} for b in analogy_bridges
         ],
     }
 
@@ -1929,214 +1786,6 @@ def _resolve_entity_meta(entity: str) -> Dict[str, str]:
     signs = "".join(ch for ch in entity if ch in all_known_signs)
     return {"sign": signs, "artifact_sign": "", "type": "", "level": ""}
 
-async def format_entity_compact(meta: Dict[str, Any], db_path: str = "") -> str:
-    """Format entity formula: (children)[sign]{parents} — colored brackets by link_type, signs by level"""
-    
-    LINK_TYPE_PRIORITY = ["hierarchy", "semantic", "tag", "analogy", "temporary", "error"]
-    
-    def _dedup_by_level(items: List[Dict]) -> List[tuple]:
-        """Dedup sign chars by (char, level) with count. Sorted by level DESC (artifacts first)."""
-        counter: Dict[tuple, int] = {}
-        for item in items:
-            sign = item.get("sign", "")
-            level = item.get("level", 5)
-            if isinstance(level, str):
-                level = int(level) if str(level).isdigit() else 5
-            for ch in sign:
-                key = (ch, level)
-                if key not in counter:
-                    counter[key] = 0
-                counter[key] += 1
-        result = []
-        for (ch, level) in sorted(counter.keys(), key=lambda k: k[1], reverse=True):
-            result.append((ch, level, counter[(ch, level)]))
-        return result
-    
-    # === CHILDREN from DB (grouped by entity for multiple link_types) ===
-    children_by_entity: Dict[str, Dict] = {}
-    if db_path:
-        file_path = meta.get("path", "")
-        if file_path:
-            async with aiosqlite.connect(db_path) as db:
-                async with db.execute(
-                    'SELECT child_path, link_type FROM links WHERE parent_path = ?',
-                    (file_path,)
-                ) as cur:
-                    rows = await cur.fetchall()
-                for child_path, link_type in rows:
-                    if link_type not in VISIBLE_LINK_TYPES:
-                        continue
-                    if child_path not in children_by_entity:
-                        child_name = Path(child_path).stem
-                        child_meta = _resolve_entity_meta(child_name)
-                        child_sign = child_meta.get("sign", "")
-                        child_level = _get_level_from_meta(child_meta)
-                        children_by_entity[child_path] = {
-                            "sign": child_sign,
-                            "level": child_level,
-                            "link_types": set(),
-                            "path": child_path
-                        }
-                    children_by_entity[child_path]["link_types"].add(link_type)
-    
-    own_sign = str(meta.get("sign", "")).strip()
-    children_parts = []
-
-    # Split entities into single-link and multi-link
-    multi_link_entities: Dict[str, Dict] = {}
-    single_link_by_type: Dict[str, List[Dict]] = {}
-
-    for child_path, child_data in children_by_entity.items():
-        link_types = child_data["link_types"]
-        if len(link_types) > 1:
-            multi_link_entities[child_path] = child_data
-        else:
-            link_type = next(iter(link_types)) if link_types else "hierarchy"
-            if link_type not in single_link_by_type:
-                single_link_by_type[link_type] = []
-            single_link_by_type[link_type].append({
-                "path": child_path,
-                "sign": child_data["sign"],
-                "level": child_data["level"]
-            })
-
-    # Render single-link-type entities (children) — plain text with dedup
-    for link_type in LINK_TYPE_PRIORITY:
-        if link_type not in VISIBLE_LINK_TYPES:
-            continue
-        if link_type not in single_link_by_type:
-            continue
-        items = single_link_by_type[link_type]
-        char_levels = _dedup_by_level(items)
-        if not char_levels:
-            continue
-        parts = []
-        for ch, level, count in char_levels:
-            if count > 1:
-                parts.append(f"{count}{ch}")
-            else:
-                parts.append(ch)
-        children_parts.append(f"({''.join(parts)})")
-
-    # Render multi-link-type entities with nested brackets (matryoshka) — plain text
-    for child_path, child_data in multi_link_entities.items():
-        sign = child_data["sign"]
-        link_types = child_data["link_types"]
-
-        inner_type = "hierarchy" if "hierarchy" in link_types else sorted(link_types, key=lambda x: LINK_TYPE_PRIORITY.index(x) if x in LINK_TYPE_PRIORITY else 99)[0]
-        outer_types = link_types - {inner_type}
-        outer_type = sorted(outer_types, key=lambda x: LINK_TYPE_PRIORITY.index(x) if x in LINK_TYPE_PRIORITY else 99)[0] if outer_types else inner_type
-
-        children_parts.append(f"(({sign}))")
-
-    children_str = "".join(children_parts)
-    
-    # Entity: plain text [sign] — dual signature display
-    #   L5 (artifact): [artifact_sign] — horizontal only
-    #   L4 (quant):    [artifact_sign+core_sign] — composite
-    #   L1-L3:         [core_sign] — vertical only
-    own_level = meta.get("level", 5)
-    if isinstance(own_level, str):
-        own_level = int(own_level) if own_level.isdigit() else 5
-    
-    own_sign = str(meta.get("sign", "")).strip()
-    own_artifact_sign = str(meta.get("artifact_sign", "")).strip()
-    
-    if own_level == 5:
-        display_sign = own_artifact_sign if own_artifact_sign else own_sign
-    elif own_level == 4:
-        art_part = own_artifact_sign if own_artifact_sign else _extract_artifact_sign_from_sign(own_sign)
-        core_part = _extract_core_sign_from_sign(own_sign)
-        if art_part and core_part:
-            display_sign = f"{art_part}{core_part}"
-        elif core_part:
-            display_sign = core_part
-        else:
-            display_sign = art_part if art_part else own_sign
-    else:
-        display_sign = _extract_core_sign_from_sign(own_sign) if own_sign else own_sign
-    
-    entity_str = f"[{display_sign}]"
-    
-    # === PARENTS from DB (grouped by entity for multiple link_types) ===
-    parents_by_entity: Dict[str, Dict] = {}
-    if db_path:
-        file_path = meta.get("path", "")
-        if file_path:
-            db_parents = await _get_db_parents(db_path, file_path)
-            for p in db_parents:
-                p_entity = p.get("entity", "")
-                p_link_type = p.get("link_type", "hierarchy")
-                if p_link_type not in VISIBLE_LINK_TYPES:
-                    continue
-                parent_meta = _resolve_entity_meta(p_entity)
-                p_sign = parent_meta.get("sign", "")
-                p_level = _get_level_from_meta(parent_meta)
-
-                if p_entity not in parents_by_entity:
-                    parents_by_entity[p_entity] = {
-                        "sign": p_sign,
-                        "level": p_level,
-                        "link_types": set(),
-                        "entity": p_entity
-                    }
-                parents_by_entity[p_entity]["link_types"].add(p_link_type)
-    
-    # Build parents — plain text {} with nested brackets for multi-link entities
-    parents_parts = []
-
-    # Split entities into single-link and multi-link
-    multi_link_parents: Dict[str, Dict] = {}
-    single_link_by_type: Dict[str, List[Dict]] = {}
-
-    for parent_entity, parent_data in parents_by_entity.items():
-        link_types = parent_data["link_types"]
-        if len(link_types) > 1:
-            multi_link_parents[parent_entity] = parent_data
-        else:
-            link_type = next(iter(link_types)) if link_types else "hierarchy"
-            if link_type not in single_link_by_type:
-                single_link_by_type[link_type] = []
-            single_link_by_type[link_type].append({
-                "entity": parent_entity,
-                "sign": parent_data["sign"],
-                "level": parent_data["level"]
-            })
-
-    # Render single-link-type entities (parents) — plain text with dedup
-    for link_type in LINK_TYPE_PRIORITY:
-        if link_type not in VISIBLE_LINK_TYPES:
-            continue
-        if link_type not in single_link_by_type:
-            continue
-        items = single_link_by_type[link_type]
-        char_levels = _dedup_by_level(items)
-        if not char_levels:
-            continue
-        parts = []
-        for ch, level, count in char_levels:
-            if count > 1:
-                parts.append(f"{count}{ch}")
-            else:
-                parts.append(ch)
-        parents_parts.append("{" + "".join(parts) + "}")
-
-    # Render multi-link-type entities with nested brackets (matryoshka) — plain text
-    for parent_entity, parent_data in multi_link_parents.items():
-        sign = parent_data["sign"]
-        link_types = parent_data["link_types"]
-
-        inner_type = "hierarchy" if "hierarchy" in link_types else sorted(link_types, key=lambda x: LINK_TYPE_PRIORITY.index(x) if x in LINK_TYPE_PRIORITY else 99)[0]
-        outer_types = link_types - {inner_type}
-        outer_type = sorted(outer_types, key=lambda x: LINK_TYPE_PRIORITY.index(x) if x in LINK_TYPE_PRIORITY else 99)[0] if outer_types else inner_type
-
-        parents_parts.append(f"{{{{{sign}}}}}")
-
-    parents_str = "".join(parents_parts)
-    
-    return f"{children_str}{entity_str}{parents_str}"
-
-
 # ============================================================================
 # Recalc Functions
 # ============================================================================
@@ -2161,6 +1810,8 @@ async def _recalc_signs(db_path: str, dry_run: bool = False) -> Dict[str, Any]:
             continue
         if _is_meta_root(path):
             continue
+        if level in (0, 1):
+            continue
         
         if level == 5:
             # Artifact: artifact_sign by heuristic, no core_sign
@@ -2175,7 +1826,8 @@ async def _recalc_signs(db_path: str, dry_run: bool = False) -> Dict[str, Any]:
             source = "auto" if confident else "weak_auto"
             percentages = core_result.get("percentages", {})
             
-            # For L4, also collect artifact_sign from child artifacts (L5)
+            # L4 keeps only its own optional artifact_sign in YAML.
+            # Child artifact inventory is represented by core_mix/drift/UI, not by sign.
             art_sign = ""
             if level == 4:
                 try:
@@ -2184,8 +1836,7 @@ async def _recalc_signs(db_path: str, dry_run: bool = False) -> Dict[str, Any]:
                         end = raw.find("\n---\n", 4)
                         if end > 0:
                             fm = yaml.safe_load(raw[4:end]) or {}
-                            fm["path"] = path
-                            art_sign = await _collect_artifact_sign_from_children(fm, db_path)
+                            art_sign = str(fm.get("artifact_sign") or "")
                 except Exception:
                     pass
             
@@ -2268,15 +1919,7 @@ async def _process_orphans(
             continue
         try:
             raw = p.read_text(encoding="utf-8")
-            if not raw.startswith("---"):
-                orphans.append((p, raw, {}, ""))
-                continue
-            end = raw.find("\n---\n", 4)
-            if end < 0:
-                orphans.append((p, raw, {}, ""))
-                continue
-            fm = yaml.safe_load(raw[4:end]) or {}
-            content = raw[end + 5:]
+            fm, content = _parse_frontmatter(raw)
             sign = str(fm.get("sign", "")).strip()
             level = fm.get("level", 0)
             if isinstance(level, str):
@@ -2315,14 +1958,15 @@ async def _process_orphans(
         parents_auto = False
         if not parents_meta and auto_parents and content:
             if RULE["reference_vectors"]:
-                vec = await _get_embedding(_strip_formula_html(content)[:EMBED_MAX_CHARS])
+                vec = await _get_embedding(content[:EMBED_MAX_CHARS])
                 if vec:
                     async with aiosqlite.connect(db_path) as db:
                         async with db.execute(
                             'SELECT f.path, f.sign, f.level, e.embedding FROM files f '
                             'LEFT JOIN embeddings e ON f.path = e.path '
-                            'WHERE e.embedding IS NOT NULL AND f.level < ?',
-                            (level,)
+                            'WHERE e.embedding IS NOT NULL AND f.path <> ? '
+                            'AND COALESCE(f.sign, "") <> "" AND f.level < ?',
+                            (str(p), level)
                         ) as cur:
                             rows = await cur.fetchall()
 
@@ -2401,6 +2045,7 @@ async def _index_all_files(db_path: str, with_embeddings: bool = False) -> Dict[
     total = 0
     embedded = 0
     errors = 0
+    seen_paths: Set[str] = set()
     for p in root.rglob("*.md"):
         rel_parts = p.relative_to(root).parts
         if any(part.startswith('.') or part in EXCLUDED_DIRS for part in rel_parts):
@@ -2408,13 +2053,14 @@ async def _index_all_files(db_path: str, with_embeddings: bool = False) -> Dict[
         try:
             data = await read_file_with_metadata(p)
             await _index_file(db_path, p, data)
+            seen_paths.add(str(p))
             total += 1
             # Meta-root (level 0) is indexed for graph visibility but never embedded
             if _is_meta_root(p):
                 continue
             if with_embeddings and data.get('content') and RULE["reference_vectors"]:
                 if not await _embedding_is_fresh(db_path, str(p)):
-                    clean_content = _strip_formula_html(data['content'])
+                    clean_content = data['content']
                     vec = await _get_embedding(clean_content[:EMBED_MAX_CHARS])
                     if vec:
                         await _save_embedding(db_path, str(p), vec)
@@ -2424,11 +2070,25 @@ async def _index_all_files(db_path: str, with_embeddings: bool = False) -> Dict[
         except Exception as e:
             logger.warning(f"Indexing error {p}: {e}")
             errors += 1
+
+    if seen_paths:
+        placeholders = ",".join("?" for _ in seen_paths)
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                f"DELETE FROM links WHERE child_path NOT IN ({placeholders})",
+                tuple(seen_paths),
+            )
+            await db.execute(
+                f"DELETE FROM files WHERE path NOT IN ({placeholders})",
+                tuple(seen_paths),
+            )
+            await db.commit()
+
     orphans = await _find_orphaned_links(db_path)
     return {"indexed": total, "embedded": embedded, "errors": errors, "orphans": orphans}
 
 async def run_server():
-    db_path = os.path.join(OBSIDIAN_ROOT, DATABASE_NAME)
+    db_path = _default_db_path()
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     await init_db(db_path)
 
@@ -2498,13 +2158,30 @@ async def run_server():
                                 "sign": {"type": "string", "description": "Domain sign assigned manually or by semantic classification, e.g. S, D, E."},
                                 "artifact_sign": {"type": "string", "description": "Material type sign for artifacts/quants, e.g. note, concept, reference, log, news, hypothesis, specification."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Obsidian wiki links for parents, e.g. ['[[Systems]]']."},
-                                "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "analogy", "tag", "error"]}}}, "description": "Structured parent links used by NOUZ."},
+                                "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "tag", "error"]}}}, "description": "Structured parent links used by NOUZ."},
                                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Search and semantic tags."}
                             }
                         },
                         "content_lock": {"type": "boolean", "description": "If true, IGNORE content param and preserve original file text. Default false.", "default": False}
                     },
                     "required": ["path", "content"]
+                }
+            ),
+            types.Tool(
+                name="update_metadata",
+                description="Update only YAML frontmatter for an existing note and preserve the Markdown body exactly. "
+                            "Use this for safe changes to type, level, sign, artifact_sign, tags, parents, and parents_meta "
+                            "when the note content must not be touched.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Relative path from OBSIDIAN_ROOT"},
+                        "metadata": {
+                            "type": "object",
+                            "description": "YAML frontmatter to write while preserving the existing body."
+                        }
+                    },
+                    "required": ["path", "metadata"]
                 }
             ),
             types.Tool(
@@ -2537,7 +2214,7 @@ async def run_server():
             types.Tool(
                 name="get_parents",
                 description="Return the parent links of one note from the graph index. Each result includes the parent entity name "
-                            "and link_type, such as hierarchy, semantic, temporary, analogy, tag, or error. Use this to understand "
+                            "and link_type, such as hierarchy, semantic, temporary, tag, or error. Use this to understand "
                             "where a note belongs before editing links. It is read-only. Use suggest_parents when a note has no "
                             "parents and you want candidate links.",
                 inputSchema={
@@ -2650,23 +2327,6 @@ async def run_server():
                 ),
             ])
 
-        tools.append(
-            types.Tool(
-                name="format_entity_compact",
-                description="Generate a compact graph formula for one note, such as (children)[this note]{parents}. Use it when an "
-                            "agent needs a short structural summary of where a note sits in the knowledge graph. By default it is "
-                            "read-only. If write=true, the formula block is written back into the note.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Relative path from OBSIDIAN_ROOT"},
-                        "write": {"type": "boolean", "description": "If true, write formula block to file", "default": False}
-                    },
-                    "required": ["path"]
-                }
-            )
-        )
-
         if RULE["has_sign_auto"]:
             tools.append(
                 types.Tool(
@@ -2704,7 +2364,7 @@ async def run_server():
                                     "type": "object",
                                     "properties": {
                                         "entity": {"type": "string", "description": "Parent entity name or path."},
-                                        "link_type": {"type": "string", "description": "Relationship type.", "enum": ["hierarchy", "semantic", "temporary", "analogy", "tag", "error"]}
+                                        "link_type": {"type": "string", "description": "Relationship type.", "enum": ["hierarchy", "semantic", "temporary", "tag", "error"]}
                                     },
                                     "required": ["entity"]
                                 },
@@ -2754,18 +2414,31 @@ async def run_server():
                     # IGNORE content param, read original file text
                     async with aiofiles.open(full, 'r', encoding='utf-8') as f:
                         file_full_text = await f.read()
-                    # Strip YAML frontmatter if present, write_file_with_metadata adds its own
-                    match = re.match(r'^---\n(.*?)\n---\n(.*)', file_full_text, re.DOTALL)
-                    if match:
-                        content = match.group(2) # Content without YAML
-                    else:
-                        content = file_full_text
+                    _, content = _split_frontmatter_raw(file_full_text)
                 
                 success, error = await write_file_with_metadata(full, content, meta, db_path)
                 if success:
                     return [types.TextContent(type="text", text=json.dumps({"status": "ok", "path": rel}, ensure_ascii=False))]
                 else:
                     return [types.TextContent(type="text", text=json.dumps({"status": "error", "reason": error}, ensure_ascii=False))]
+
+            elif name == "update_metadata":
+                rel = args.get("path", "")
+                full = _safe_path(OBSIDIAN_ROOT, rel)
+                if full is None:
+                    return [types.TextContent(type="text", text="Error: Path outside OBSIDIAN_ROOT")]
+                if not full.exists():
+                    return [types.TextContent(type="text", text=f"File not found: {rel}")]
+
+                async with aiofiles.open(full, 'r', encoding='utf-8') as f:
+                    file_full_text = await f.read()
+                _, body = _split_frontmatter_raw(file_full_text)
+
+                meta = args.get("metadata", {})
+                success, error = await write_file_with_metadata(full, body, meta, db_path)
+                if success:
+                    return [types.TextContent(type="text", text=json.dumps({"status": "ok", "path": rel, "body_preserved": True}, ensure_ascii=False))]
+                return [types.TextContent(type="text", text=json.dumps({"status": "error", "reason": error}, ensure_ascii=False))]
 
             elif name == "list_files":
                 root = Path(OBSIDIAN_ROOT)
@@ -2903,7 +2576,7 @@ async def run_server():
                     parents_meta = []
                     # 1. Hierarchy link: closest entity by embedding similarity
                     if RULE["reference_vectors"]:
-                        vec = await _get_embedding(_strip_formula_html(content)[:EMBED_MAX_CHARS])
+                        vec = await _get_embedding(content[:EMBED_MAX_CHARS])
                         if vec:
                             core_result = await _determine_core_by_embedding(content, db_path)
                             dominant_core = core_result.get("dominant")
@@ -2912,8 +2585,9 @@ async def run_server():
                                 async with db.execute(
                                     'SELECT f.path, f.sign, f.level, e.embedding FROM files f '
                                     'LEFT JOIN embeddings e ON f.path = e.path '
-                                    'WHERE e.embedding IS NOT NULL AND f.level < ?',
-                                    (level,)
+                                    'WHERE e.embedding IS NOT NULL AND f.path <> ? '
+                                    'AND COALESCE(f.sign, "") <> "" AND f.level < ?',
+                                    (str(full), level)
                                 ) as cur:
                                     rows = await cur.fetchall()
 
@@ -3003,34 +2677,6 @@ async def run_server():
                 limit = args.get("limit", 50)
                 result = await _process_orphans(db_path, dry_run, auto_parents, limit)
                 return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "format_entity_compact":
-                rel = args.get("path", "")
-                do_write = args.get("write", False)
-                full = _safe_path(OBSIDIAN_ROOT, rel)
-                if full is None:
-                    return [types.TextContent(type="text", text="Error: Path outside OBSIDIAN_ROOT")]
-                if not full.exists():
-                    return [types.TextContent(type="text", text=f"File not found: {rel}")]
-                
-                data = await read_file_with_metadata(full)
-                formula = await format_entity_compact(data, db_path)
-                
-                if do_write:
-                    # Format: (children)[sign]{parents} with colored brackets by link_type
-                    detail = f'<details>\n<summary>Structure</summary>\n\n```\n{formula}\n```\n\n</details>'
-                    
-                    content = data.get("content", "")
-                    content = _clean_content(content)
-                    content = re.sub(r'<details>\s*\n<summary>\s*\*[^*]*(?:Структура|Structure)[^*]*\*\s*</summary>.*?</details>\s*\n*', '', content, flags=re.DOTALL)
-                    new_content = detail + "\n\n" + content.strip()
-                    success, error = await write_file_with_metadata(full, new_content, data, db_path)
-                    if success:
-                        return [types.TextContent(type="text", text=json.dumps({"status": "ok", "formula": formula}, ensure_ascii=False))]
-                    else:
-                        return [types.TextContent(type="text", text=json.dumps({"status": "error", "reason": error}, ensure_ascii=False))]
-                
-                return [types.TextContent(type="text", text=json.dumps({"formula": formula}, ensure_ascii=False))]
 
             else:
                 return [types.TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False))]
