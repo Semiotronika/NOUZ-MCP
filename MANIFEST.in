@@ -1,0 +1,14 @@
+include LICENSE
+include README.md
+include README_EN.md
+include server.py
+include server.json
+include glama.json
+include config.template.yaml
+include Dockerfile
+include requirements.txt
+include pytest.ini
+include test_server.py
+include pytest_smoke.py
+recursive-include asset *
+recursive-include scripts *.py

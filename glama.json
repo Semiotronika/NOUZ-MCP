@@ -2,19 +2,22 @@
   "$schema": "https://glama.ai/mcp/schemas/server.json",
   "maintainers": ["Volnaya_Sreda"],
   "name": "NOUZ MCP Server",
-  "description": "Local-first semantic memory server for Markdown/Obsidian via MCP — vector embeddings, DAG hierarchy, auto-classification, and cross-domain bridge detection",
+  "description": "Local-first MCP server for Obsidian and Markdown knowledge bases: DAG graph, YAML metadata, local SQLite index, semantic classification, drift signals, and suggested links for AI agents",
   "keywords": [
     "obsidian",
     "markdown",
-    "knowledge-graph",
-    "semantic-memory",
-    "semantic-search",
+    "knowledge-base",
+    "graph-context",
+    "ai-agents",
+    "yaml-frontmatter",
+    "local-index",
     "embeddings",
     "dag",
     "mcp",
     "mcp-server",
     "local-first",
-    "auto-classification",
-    "domain-signs"
+    "semantic-classification",
+    "drift-detection",
+    "suggested-links"
   ]
 }
