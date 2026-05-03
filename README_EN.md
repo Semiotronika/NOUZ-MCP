@@ -255,7 +255,7 @@ python test_server.py
 - 🌐 [semiotronika.ru](https://semiotronika.ru)
 - 📦 [PyPI](https://pypi.org/project/nouz-mcp/)
 - 🗂️ [Glama Registry](https://glama.ai/mcp/servers/Semiotronika/NOUZ-MCP)
-- 💬 [Telegram](https://t.me/volnaya_sreda)
+- 💬 [Telegram](https://t.me/Masha_Belkina)
 - 🐙 [GitHub](https://github.com/Semiotronika/NOUZ-MCP)
 
 MIT License © 2026 Semiotronika
