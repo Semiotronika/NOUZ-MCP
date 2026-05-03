@@ -169,25 +169,25 @@ thresholds:
   parent_link_threshold: 0.55
 
 artifact_signs:
-  - sign: β
+  - sign: n
     name: Note
     text: Short note, observation, fragment.
-  - sign: δ
+  - sign: c
     name: Concept
     text: Definition, concept, entity description.
-  - sign: ζ
+  - sign: r
     name: Reference
     text: External source, documentation, link, citation.
-  - sign: σ
+  - sign: l
     name: Log
     text: Session log, chronology, dialogue record.
-  - sign: μ
-    name: News
-    text: News item, update, release note.
-  - sign: λ
+  - sign: u
+    name: Update
+    text: Update, release note, changelog entry.
+  - sign: h
     name: Hypothesis
     text: Hypothesis, assumption, speculative idea.
-  - sign: 🝕
+  - sign: s
     name: Specification
     text: Technical specification, instruction, requirements.
 ```
@@ -197,7 +197,7 @@ Check pairwise cosines: mean-centered between different domains should be
 noticeably lower than raw. If all pairs are roughly equal — strengthen the differences in texts.
 
 `etalons` are semantic domains compared through embeddings.
-`artifact_signs` describe the material type of L5 artifacts: note, concept, reference, log, news, hypothesis, or specification. This is a heuristic label, not a separate embedding etalon.
+`artifact_signs` describe the material type of L5 artifacts: note, concept, reference, log, update, hypothesis, or specification. This is a heuristic label, not a separate embedding etalon. In the public convention, domains use uppercase signs (`S/D/E`) while material types use lowercase signs (`n/c/r/l/u/h/s`); you can replace them in config as long as signs stay short and do not conflict with domain signs. If needed, add `keywords` to any material type: the server will use your detection words instead of the built-in RU/EN fallback.
 
 ### Real Calculation Example
 

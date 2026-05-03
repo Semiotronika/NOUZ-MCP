@@ -72,7 +72,7 @@ def make_md(rel_path: str, content: str = "", **meta) -> Path:
 async def test_version():
     section("VERSION")
     try:
-        assert server.VERSION == "3.0.1", f"Expected 3.0.1, got {server.VERSION}"
+        assert server.VERSION == "3.0.2", f"Expected 3.0.2, got {server.VERSION}"
         ok(f"VERSION == {server.VERSION}")
     except AssertionError as e:
         fail("VERSION check", str(e))
@@ -92,6 +92,23 @@ async def test_mode_defaults():
         ok("RULE dict has expected keys")
     except AssertionError as e:
         fail("RULE structure", str(e))
+
+
+async def test_artifact_sign_russian_keywords():
+    section("artifact_sign Russian keyword heuristics")
+    cases = [
+        ("Лог сессии: сначала проверили базу.", "l"),
+        ("Это гипотеза о слабых связях.", "h"),
+        ("Техническое задание для агента.", "s"),
+        ("https://example.com/reference", "r"),
+    ]
+    for content, expected in cases:
+        got = server._determine_artifact_sign(content, {})
+        try:
+            assert got == expected, f"{content!r}: expected {expected}, got {got}"
+            ok(f"{content[:24]!r} -> {got}")
+        except AssertionError as e:
+            fail("artifact_sign Russian keyword", str(e))
 
 
 async def test_safe_path():
@@ -435,7 +452,7 @@ async def test_write_preserves_body_by_default():
     await server.write_file_with_metadata(
         p,
         body,
-        {"type": "artifact", "level": 5, "sign": "β"},
+        {"type": "artifact", "level": 5, "sign": "n"},
         DB_PATH,
     )
     raw = p.read_text(encoding="utf-8")
@@ -752,6 +769,7 @@ async def main():
 
     await test_version()
     await test_mode_defaults()
+    await test_artifact_sign_russian_keywords()
     await test_safe_path()
     await test_dump_metadata()
     await test_dump_metadata_whitelist()

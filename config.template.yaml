@@ -99,26 +99,31 @@ thresholds:
 # Artifact signs are heuristic labels, not embedding etalons.
 # L5 artifacts get one of these signs by content-structure rules.
 # L4 quants can include artifact_sign as the horizontal part of a composite sign.
+# Public convention: domains use uppercase signs (S/D/E), material types use
+# lowercase signs (n/c/r/l/u/h/s). You may change them, but keep signs short
+# and avoid conflicts with domain signs.
+# Optional `keywords` may be added to any item to override the built-in RU/EN
+# detection words for that material type.
 artifact_signs:
-  - sign: β
+  - sign: n
     name: Note
     text: "Short note, observation, fragment."
-  - sign: δ
+  - sign: c
     name: Concept
     text: "Definition, concept, entity description."
-  - sign: ζ
+  - sign: r
     name: Reference
     text: "External source, documentation, link, citation."
-  - sign: σ
+  - sign: l
     name: Log
     text: "Session log, chronology, dialogue record."
-  - sign: μ
-    name: News
-    text: "News item, update, release note."
-  - sign: λ
+  - sign: u
+    name: Update
+    text: "Update, release note, changelog entry."
+  - sign: h
     name: Hypothesis
     text: "Hypothesis, assumption, speculative idea."
-  - sign: 🝕
+  - sign: s
     name: Specification
     text: "Technical specification, instruction, requirements."
 

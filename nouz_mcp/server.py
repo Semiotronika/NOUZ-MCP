@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz -- Unified MCP Server for Obsidian. v3.0.1
+Nouz -- Unified MCP Server for Obsidian. v3.0.2
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -9,7 +9,7 @@ Three modes:
 - sloi: Strict 5-level hierarchy with semantic classification
 """
 
-VERSION = "3.0.1"
+VERSION = "3.0.2"
 
 import asyncio
 import hashlib
@@ -37,14 +37,46 @@ from mcp import types
 # ============================================================================
 
 DEFAULT_ARTIFACT_SIGNS = [
-    {"sign": "β", "name": "Note", "text": "Short note, observation, fragment."},
-    {"sign": "δ", "name": "Concept", "text": "Definition, concept, entity description."},
-    {"sign": "ζ", "name": "Reference", "text": "External source, documentation, link, citation."},
-    {"sign": "σ", "name": "Log", "text": "Session log, chronology, dialogue record."},
-    {"sign": "μ", "name": "News", "text": "News item, update, release note."},
-    {"sign": "λ", "name": "Hypothesis", "text": "Hypothesis, assumption, speculative idea."},
-    {"sign": "🝕", "name": "Specification", "text": "Technical specification, instruction, requirements."},
+    {"sign": "n", "name": "Note", "text": "Short note, observation, fragment."},
+    {"sign": "c", "name": "Concept", "text": "Definition, concept, entity description."},
+    {"sign": "r", "name": "Reference", "text": "External source, documentation, link, citation."},
+    {"sign": "l", "name": "Log", "text": "Session log, chronology, dialogue record."},
+    {"sign": "u", "name": "Update", "text": "Update, release note, changelog entry."},
+    {"sign": "h", "name": "Hypothesis", "text": "Hypothesis, assumption, speculative idea."},
+    {"sign": "s", "name": "Specification", "text": "Technical specification, instruction, requirements."},
 ]
+
+DEFAULT_ARTIFACT_KEYWORDS = {
+    "specification": [
+        "должно быть", "требования", "спецификац", "инструкц", "архитектурн",
+        "техническое задани", "технического задани", "техническим задани",
+        "техническому задани", "техзадан", "тз:",
+        "must be", "requirements", "specification",
+    ],
+    "log": [
+        "лог ", "сессия", "сначала", "потом", "далее,", "хронолог",
+        "что сделали", "что получилось", "что не получилось",
+        "session log", "chronology", "timeline", "step by step",
+    ],
+    "update": [
+        "новость", "обновлен", "свеж", "произошло", "что нового",
+        "стало известно", "вышло", "релиз", "news:", "update:", "released",
+    ],
+    "hypothesis": [
+        "гипотез", "предположим", "может быть", "возможно,", "спекуляц",
+        "допущен", "предположен", "если бы", "что если", "hypothesis",
+        "speculation", "what if", "suppose that",
+    ],
+    "reference": [
+        "http://", "https://", "www.", "документац", "сторонн", "ссылк",
+        "внешн", "обзор ", "каталог", "reference:", "documentation",
+    ],
+    "concept": [
+        "поняти", "определен", "концепт", "сущност", "это когда",
+        "это такой", "это то,", "границы понятия", "свойства",
+        "отличия от", "definition", "concept:", "entity",
+    ],
+}
 
 DEFAULT_CONFIG = {
     "mode": "luca",
@@ -171,6 +203,16 @@ ARTIFACT_SIGN_LIST = (
 )
 ARTIFACT_SIGNS = set(e["sign"] for e in ARTIFACT_SIGN_LIST)
 ARTIFACT_SIGN_TEXTS = {e["sign"]: e.get("text", "") for e in ARTIFACT_SIGN_LIST}
+ARTIFACT_SIGN_BY_NAME = {
+    str(e.get("name", "")).lower(): str(e["sign"])
+    for e in ARTIFACT_SIGN_LIST
+    if e.get("name") and e.get("sign")
+}
+ARTIFACT_KEYWORDS_BY_NAME = {
+    str(e.get("name", "")).lower(): [str(kw).lower() for kw in e.get("keywords", [])]
+    for e in ARTIFACT_SIGN_LIST
+    if e.get("name") and e.get("keywords")
+}
 LEVEL_MAP = CONFIG.get("levels", DEFAULT_CONFIG["levels"])
 SIGN_SPREAD_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("sign_spread", 0.05)
 CONFIDENT_SPREAD_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("confident_spread", 60.0)
@@ -694,61 +736,64 @@ def _extract_core_sign_from_sign(sign: str) -> str:
         return "".join(ch for ch in sign if ch in CORE_SIGNS)
     return "".join(ch for ch in sign if ch not in ARTIFACT_SIGNS)
 
+def _artifact_sign(name: str, fallback: str) -> str:
+    """Return configured artifact sign by material name, with public ASCII fallback."""
+    key = name.lower()
+    if key in ARTIFACT_SIGN_BY_NAME:
+        return ARTIFACT_SIGN_BY_NAME[key]
+    if key == "update" and "news" in ARTIFACT_SIGN_BY_NAME:
+        return ARTIFACT_SIGN_BY_NAME["news"]
+    return fallback
+
+def _artifact_keywords(name: str) -> List[str]:
+    """Return configured artifact detection keywords, or public RU/EN defaults."""
+    key = name.lower()
+    if key in ARTIFACT_KEYWORDS_BY_NAME:
+        return ARTIFACT_KEYWORDS_BY_NAME[key]
+    if key == "update" and "news" in ARTIFACT_KEYWORDS_BY_NAME:
+        return ARTIFACT_KEYWORDS_BY_NAME["news"]
+    return DEFAULT_ARTIFACT_KEYWORDS.get(key, [])
+
 def _determine_artifact_sign(content: str, meta: Dict) -> str:
     """Determine artifact sign by content structure/heuristics — no embeddings needed.
     
     Artifact signs describe FORMAT/STRUCTURE, not topic. This is intentional:
-    a log about physics should be σ (log), not D (domain) — the embedding captures
+    a log about physics should be l (log), not D (domain) — the embedding captures
     the physics topic for semantic bridges, while the sign captures the format.
-    
-    Priority order: most specific/structured first, least specific (β) as fallback.
+
+    Priority order: most specific/structured first, least specific (n) as fallback.
     """
     if not content:
-        return "β"  # Default: note
-    
+        return _artifact_sign("note", "n")  # Default: note
+
     text = content.lower()
-    
-    # 🝕 Спецификация — requirements, must/should, architecture docs
-    spec_kw = ['должно быть', 'требования', 'спецификац', 'инструкц', 'архитектурн',
-               'техническ задан', 'тз:', 'must be', 'requirements', 'specification']
-    if any(kw in text for kw in spec_kw):
-        return "🝕"
-    
-    # σ Лог — chronology, timestamps, session records
-    log_kw = ['лог ', 'сессия', 'сначала', 'потом', 'далее,', 'хронолог',
-              'что сделали', 'что получилось', 'что не получилось',
-              'session log', 'chronology', 'timeline', 'step by step']
-    if any(kw in text for kw in log_kw):
-        return "σ"
-    
-    # μ Новость — news, updates, fresh info
-    news_kw = ['новость', 'обновлен', 'свеж', 'произошло', 'что нового',
-               'стало известно', 'вышло', 'релиз', 'news:', 'update:', 'released']
-    if any(kw in text for kw in news_kw):
-        return "μ"
-    
-    # λ Гипотеза — hypothesis, speculation, assumptions
-    hyp_kw = ['гипотез', 'предположим', 'может быть', 'возможно,', 'спекуляц',
-              'допущен', 'предположен', 'если бы', 'что если', 'hypothesis',
-              'speculation', 'what if', 'suppose that']
-    if any(kw in text for kw in hyp_kw):
-        return "λ"
-    
-    # ζ Референс — external links, documentation, third-party
-    ref_kw = ['http://', 'https://', 'www.', 'документац', 'сторонн', 'ссылк',
-              'внешн', 'обзор ', 'каталог', 'reference:', 'documentation']
-    if any(kw in text for kw in ref_kw):
-        return "ζ"
-    
-    # δ Понятие — definition, concept, entity description
-    concept_kw = ['поняти', 'определен', 'концепт', 'сущност', 'это когда',
-                  'это такой', 'это то,', 'границы понятия', 'свойства',
-                  'отличия от', 'definition', 'concept:', 'entity']
-    if any(kw in text for kw in concept_kw):
-        return "δ"
-    
-    # β Заметка — default: short note, observation, fragment
-    return "β"
+
+    # Specification — requirements, must/should, architecture docs
+    if any(kw in text for kw in _artifact_keywords("specification")):
+        return _artifact_sign("specification", "s")
+
+    # Log — chronology, timestamps, session records
+    if any(kw in text for kw in _artifact_keywords("log")):
+        return _artifact_sign("log", "l")
+
+    # Update — news, updates, fresh info
+    if any(kw in text for kw in _artifact_keywords("update")):
+        return _artifact_sign("update", "u")
+
+    # Hypothesis — hypothesis, speculation, assumptions
+    if any(kw in text for kw in _artifact_keywords("hypothesis")):
+        return _artifact_sign("hypothesis", "h")
+
+    # Reference — external links, documentation, third-party
+    if any(kw in text for kw in _artifact_keywords("reference")):
+        return _artifact_sign("reference", "r")
+
+    # Concept — definition, concept, entity description
+    if any(kw in text for kw in _artifact_keywords("concept")):
+        return _artifact_sign("concept", "c")
+
+    # Note — default: short note, observation, fragment
+    return _artifact_sign("note", "n")
 
 async def _collect_artifact_sign_from_children(meta: Dict, db_path: str) -> str:
     """Collect artifact_sign from child artifacts (level=5) via links table.
@@ -757,7 +802,7 @@ async def _collect_artifact_sign_from_children(meta: Dict, db_path: str) -> str:
     the artifact(s) it was created from (its children in the graph).
     We look up child files in the links table and extract their artifact_sign.
     
-    Returns deduplicated artifact_sign characters (e.g., "σ" or "σλ").
+    Returns deduplicated artifact_sign characters (e.g., "l" or "lh").
     """
     artifact_signs: List[str] = []
     path = meta.get("path", "")
@@ -792,7 +837,7 @@ async def _collect_artifact_sign_from_children(meta: Dict, db_path: str) -> str:
 async def _find_temporary_anchor(content: str, db_path: str, level: int = 5) -> Optional[str]:
     """Find a domain anchor for a temporary link based on content's core sign.
     
-    For L5 artifacts: the artifact sign is format (σ/β/etc), not domain.
+    For L5 artifacts: the artifact sign is format (n/l/etc), not domain.
     We use embedding to determine the domain, then find the nearest L1/L2 
     entity with that core sign. This gives the artifact a "parking spot" 
     in the hierarchy until it's properly linked.
@@ -1152,7 +1197,7 @@ async def _find_tag_bridges(
     - Pink: cosine of full text -- "these notes are about the same thing"
     - Gray: cosine of individual tags -- "these notes share a hidden concept"
 
-    Example: note about thermodynamic entropy and note about technical debt:
+    Example: note about product architecture and note about release planning:
     texts are different, but tag "entropy" can be close to tag "disorder"
     in embedding space, so the bridge reveals a shared concept.
     """
@@ -2156,7 +2201,7 @@ async def run_server():
                                 "type": {"type": "string", "description": "Entity type such as core, pattern, module, quant, or artifact.", "enum": ["meta", "core", "pattern", "module", "quant", "artifact"]},
                                 "level": {"type": "integer", "description": "Hierarchy level: 0=meta root, 1=core/domain, 2=pattern/topic, 3=module/group, 4=quant/idea, 5=artifact/raw material.", "enum": [0, 1, 2, 3, 4, 5]},
                                 "sign": {"type": "string", "description": "Domain sign assigned manually or by semantic classification, e.g. S, D, E."},
-                                "artifact_sign": {"type": "string", "description": "Material type sign for artifacts/quants, e.g. note, concept, reference, log, news, hypothesis, specification."},
+                                "artifact_sign": {"type": "string", "description": "Material type sign for artifacts/quants, e.g. note, concept, reference, log, update, hypothesis, specification."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Obsidian wiki links for parents, e.g. ['[[Systems]]']."},
                                 "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "tag", "error"]}}}, "description": "Structured parent links used by NOUZ."},
                                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Search and semantic tags."}

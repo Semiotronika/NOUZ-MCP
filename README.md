@@ -169,25 +169,25 @@ thresholds:
   parent_link_threshold: 0.55
 
 artifact_signs:
-  - sign: β
+  - sign: n
     name: Note
     text: Short note, observation, fragment.
-  - sign: δ
+  - sign: c
     name: Concept
     text: Definition, concept, entity description.
-  - sign: ζ
+  - sign: r
     name: Reference
     text: External source, documentation, link, citation.
-  - sign: σ
+  - sign: l
     name: Log
     text: Session log, chronology, dialogue record.
-  - sign: μ
-    name: News
-    text: News item, update, release note.
-  - sign: λ
+  - sign: u
+    name: Update
+    text: Update, release note, changelog entry.
+  - sign: h
     name: Hypothesis
     text: Hypothesis, assumption, speculative idea.
-  - sign: 🝕
+  - sign: s
     name: Specification
     text: Technical specification, instruction, requirements.
 ```
@@ -197,7 +197,7 @@ artifact_signs:
 заметно ниже сырого. Если все пары примерно одинаковые — усильте различия в текстах.
 
 `etalons` — это смысловые домены, которые сравниваются через эмбеддинги.
-`artifact_signs` — тип материала для артефактов L5: заметка, концепт, ссылка, лог, новость, гипотеза или спецификация. Это эвристическая метка, а не отдельный эталон для эмбеддингов.
+`artifact_signs` — тип материала для артефактов L5: заметка, концепт, ссылка, лог, обновление, гипотеза или спецификация. Это эвристическая метка, а не отдельный эталон для эмбеддингов. В публичной схеме домены обычно обозначаются заглавными буквами (`S/D/E`), а типы материала — строчными (`n/c/r/l/u/h/s`); их можно заменить в конфиге, если знаки короткие и не конфликтуют с доменами. При необходимости для любого типа можно добавить `keywords`: тогда сервер будет использовать ваши слова для эвристики вместо встроенного RU/EN набора.
 
 ### Реальный пример расчёта
 

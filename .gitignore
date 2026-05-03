@@ -1,5 +1,8 @@
 # Distribution / Build
+build/
 dist/
+dist-*/
+.build-tmp/
 *.egg-info/
 __pycache__/
 */__pycache__/
