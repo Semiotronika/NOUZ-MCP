@@ -10,6 +10,9 @@ __pycache__/
 pytest-cache-files-*/
 .test-tmp/
 .test_tmp/
+_release_tmp*/
+_manual_tmp/
+_py_manual_dir/
 
 # MCP servers
 .env

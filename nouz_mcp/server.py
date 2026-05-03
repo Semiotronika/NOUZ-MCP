@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz -- Unified MCP Server for Obsidian. v3.0.2
+Nouz -- Unified MCP Server for Obsidian. v3.0.3
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -9,7 +9,7 @@ Three modes:
 - sloi: Strict 5-level hierarchy with semantic classification
 """
 
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 
 import asyncio
 import hashlib
@@ -470,18 +470,6 @@ async def read_file_with_metadata(file_path: Path) -> Dict[str, Any]:
         logger.error(f"Error reading {file_path}: {e}")
         return {"path": str(file_path), "content": "", "error": str(e)}
 
-def _clean_content(content: str) -> str:
-    content = re.sub(r'\n*---\s*\n## Связи\s*\n.*', '', content, flags=re.DOTALL)
-    content = re.sub(r'\n*---\s*\n## Иерархия\s*\(для графа\).*', '', content, flags=re.DOTALL)
-    content = re.sub(r'\n*## Связи\s*\n(?:\*\*Родители:\*\*.*?\n)?(?:\*\*Дети:\*\*.*?\n)?', '', content, flags=re.DOTALL)
-    content = re.sub(r'\n*## Иерархия(?:\s*\(для графа\))?\s*\n(?:\*\*Parents:\*\*.*?\n)?(?:\*\*Children:\*\*.*?\n)?', '', content, flags=re.DOTALL)
-    content = re.sub(r'\n*## Links\s*\n(?:\*\*Parents:\*\*.*?\n)?(?:\*\*Children:\*\*.*?\n)?', '', content, flags=re.DOTALL)
-    content = re.sub(r'\n*## Hierarchy\s*\n(?:\*\*Parents:\*\*.*?\n)?(?:\*\*Children:\*\*.*?\n)?', '', content, flags=re.DOTALL)
-    content = re.sub(r"^path:\s*['\"].*?['\"]\s*\n?", '', content, flags=re.MULTILINE)
-    content = re.sub(r'^\s*---\s*\n', '', content)
-    return content.strip()
-
-
 def _split_frontmatter_raw(raw: str) -> tuple[Dict[str, Any], str]:
     """Return frontmatter metadata and body without changing the body text."""
     raw_for_match = raw[1:] if raw.startswith("\ufeff") else raw
@@ -614,7 +602,7 @@ async def write_file_with_metadata(
                                 return False, "cycle_detected"
         
         yaml_str = _dump_metadata(synced)
-        body = _clean_content(content) if clean_content else content
+        body = content.strip() if clean_content else content
         output = f"---\n{yaml_str}\n---\n{body}"
         async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
             await f.write(output)
@@ -2105,8 +2093,8 @@ async def _index_all_files(db_path: str, with_embeddings: bool = False) -> Dict[
                 continue
             if with_embeddings and data.get('content') and RULE["reference_vectors"]:
                 if not await _embedding_is_fresh(db_path, str(p)):
-                    clean_content = data['content']
-                    vec = await _get_embedding(clean_content[:EMBED_MAX_CHARS])
+                    embedding_text = data['content']
+                    vec = await _get_embedding(embedding_text[:EMBED_MAX_CHARS])
                     if vec:
                         await _save_embedding(db_path, str(p), vec)
                         embedded += 1
