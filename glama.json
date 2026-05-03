@@ -1,6 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "maintainers": ["Volnaya_Sreda"],
+  "maintainers": ["Semiotronika"],
   "name": "NOUZ MCP Server",
   "description": "Local-first MCP server for Obsidian and Markdown knowledge bases: DAG graph, YAML metadata, local SQLite index, semantic classification, drift signals, and suggested links for AI agents",
   "keywords": [
