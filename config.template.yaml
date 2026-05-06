@@ -1,53 +1,3 @@
-# =============================================================================
-# NOUZ MCP Server Configuration Template
-# =============================================================================
-# Copy this file to config.yaml to activate custom settings.
-# macOS/Linux: cp config.template.yaml config.yaml
-# Windows PowerShell: Copy-Item config.template.yaml config.yaml
-# By default, without config.yaml, the server runs in "luca" mode (pure graph).
-# Optional isolated SQLite cache for tests:
-#   NOUZ_DATABASE_NAME=obsidian_kb.public.db
-#   NOUZ_DATABASE_PATH=/absolute/path/to/custom.db
-
-# Mode: luca | prizma | sloi
-# - luca: Graph-based, no semantic classification (Default fallback)
-# - prizma: Graph-based with semantic classification and core_mix
-# - sloi: Strict 5-level hierarchy with semantic classification
-mode: prizma
-
-# Meta-root: level 0 anchor node. Created once manually, never touched by server.
-# Excluded from embeddings, sign calculation, core_mix, recalc_signs, recalc_core_mix.
-# Set to the filename (without .md) of your root note, e.g. "φ My Knowledge Base"
-meta_root: ""
-
-# Semantic etalons (optional) — for better semantic classification
-# You can start with just level/type in YAML, etalons are optional
-# Recommended: use distinct domains with low cosine similarity between them.
-# Write descriptive paragraphs, NOT keyword lists. Each etalon should capture
-# the ESSENCE of the domain in 2-3 sentences, using domain-specific jargon
-# and explicit boundary statements ("not X and not Y").
-etalons:
-  - sign: S
-    name: Systems Analysis
-    text: >
-      Methodology for analysing complex objects: feedback loops,
-      emergent properties, self-regulation, bifurcation points.
-      Cybernetics, synergetics, dissipative structures, catastrophe
-      theory, autopoiesis — tools for understanding how the whole
-      exceeds the sum of its parts. Not data and not code — a way
-      of thinking about how parts form a whole and why systems
-      behave non-linearly.
-  - sign: D
-    name: Data & Science
-    text: >
-      Physics and cosmology: from subatomic particles to the large-scale
-      structure of the Universe. Lagrangians, curvature tensors, scattering
-      cross-sections, quarks, bosons, fermions, plasma, vacuum fluctuations,
-      cosmic microwave background, cosmological constant, decoherence.
-      Pure science about the nature of matter, energy and spacetime.
-  - sign: E
-    name: Engineering
-    text: >
       Software engineering, machine learning and infrastructure: writing
       and debugging code, deployment, containerisation, neural networks,
       inference, tokenisation, data serialisation, microservices, CI/CD,
@@ -131,6 +81,3 @@ artifact_signs:
 # Used to extract signs from filenames like "S Thermodynamics" or "SE System".
 # This is ONLY for name parsing, NOT for classification.
 sign_chars: ""
-
-# Lenses moved to separate PRIZMA server (LINZA).
-# See: https://github.com/Semiotronika/LINZA
