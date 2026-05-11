@@ -8,10 +8,10 @@ os.environ.setdefault("EMBED_ENABLED", "false")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import server  # noqa: E402
+from nouz_mcp import server  # noqa: E402
 
 
-def test_repository_wrapper_exposes_server_api():
+def test_package_server_exposes_server_api():
     assert server.VERSION == "3.0.3"
     assert callable(server.run_server)
     assert callable(server.main)

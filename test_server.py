@@ -24,10 +24,10 @@ os.environ["OBSIDIAN_ROOT"] = str(TEST_VAULT)
 os.environ["MODE"] = "luca"
 os.environ["EMBED_ENABLED"] = "false"
 
-# Patch sys.path so we can import server directly
+# Patch sys.path so we can import the package directly from the repo checkout
 sys.path.insert(0, str(Path(__file__).parent))
 
-import server  # noqa: E402
+from nouz_mcp import server  # noqa: E402
 
 TEST_ROOT = Path(os.environ["OBSIDIAN_ROOT"])
 DB_PATH = str(TEST_ROOT / server.DATABASE_NAME)
