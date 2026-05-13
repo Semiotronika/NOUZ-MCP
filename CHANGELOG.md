@@ -1,8 +1,8 @@
 # Changelog
 
-## 3.1.0 - prepared 2026-05-12
+## 3.1.0 - released 2026-05-13
 
-This release candidate is a structural refactor and public documentation pass.
+This release is a structural refactor and public documentation pass.
 
 ### Changed
 
