@@ -1,4 +1,5 @@
-from .server import run_server, VERSION
+from ._version import __version__
+from .server import run_server
 
-__version__ = VERSION
-__all__ = ["run_server", "VERSION"]
+VERSION = __version__
+__all__ = ["run_server", "VERSION", "__version__"]

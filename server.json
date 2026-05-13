@@ -7,12 +7,12 @@
     "url": "https://github.com/Semiotronika/NOUZ-MCP",
     "source": "github"
   },
-  "version": "3.0.3",
+  "version": "3.1.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "nouz-mcp",
-      "version": "3.0.3",
+      "version": "3.1.0",
       "transport": {
         "type": "stdio"
       },
@@ -52,7 +52,7 @@
         },
         {
           "name": "EMBED_PROVIDER",
-          "description": "Embedding provider: openai, gigachat, lmstudio, ollama",
+          "description": "Embedding provider: openai-compatible endpoint or ollama",
           "format": "string",
           "isRequired": false,
           "default": "openai"

@@ -1,10 +1,8 @@
 # NOUZ — Semantic MCP Server for Your Knowledge Base
 
-Works with Obsidian, Logseq, and any directory of Markdown files.
-
 > *Structure emerges from content.*
 
-Semantic tools for structured project memory, knowledge bases, and AI agents.
+Works with Obsidian, Logseq, and any directory of Markdown files.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
@@ -16,14 +14,6 @@ Semantic tools for structured project memory, knowledge bases, and AI agents.
 ---
 
 ## Why NOUZ
-
-Folders show where a file lives. They do not tell an agent how your documents, ideas, and materials connect inside the base.
-
-NOUZ gives your agent semantic coordinates. Each note gets a domain sign, a hierarchy level, and connections to other notes. The domain is assigned from the file's content — or manually by you, if you prefer strict hierarchy.
-
----
-
-## What It Does
 
 NOUZ sits between your note base and your AI agent. It helps turn scattered Markdown files into a graph that can be used through MCP:
 
@@ -195,6 +185,8 @@ artifact_signs:
 After setup, run `calibrate_cores` — the server creates reference vectors.
 Check pairwise cosines: mean-centered between different domains should be
 noticeably lower than raw. If all pairs are roughly equal — strengthen the differences in texts.
+You can also run the standalone etalon check from the installed package:
+`nouz-calc-etalons --config config.yaml`.
 
 `etalons` are semantic domains compared through embeddings.
 `artifact_signs` describe the material type of L5 artifacts: note, concept, reference, log, update, hypothesis, or specification. This is a heuristic label, not a separate embedding etalon. In the public convention, domains use uppercase signs (`S/D/E`) while material types use lowercase signs (`n/c/r/l/u/h/s`); you can replace them in config as long as signs stay short and do not conflict with domain signs. If needed, add `keywords` to any material type: the server will use your detection words instead of the built-in RU/EN fallback.
@@ -255,7 +247,6 @@ python test_server.py
 - 🌐 [semiotronika.ru](https://semiotronika.ru)
 - 📦 [PyPI](https://pypi.org/project/nouz-mcp/)
 - 🗂️ [Glama Registry](https://glama.ai/mcp/servers/Semiotronika/NOUZ-MCP)
-- 💬 [Telegram](https://t.me/Masha_Belkina)
 - 🐙 [GitHub](https://github.com/Semiotronika/NOUZ-MCP)
 
 MIT License © 2026 Semiotronika

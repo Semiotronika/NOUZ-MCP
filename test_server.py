@@ -14,6 +14,8 @@ import tempfile
 import shutil
 from pathlib import Path
 
+import aiosqlite
+
 # ── Setup test environment ──────────────────────────────────────────────────
 TEST_TMP_PARENT = Path(__file__).parent / ".test-tmp"
 TEST_TMP_PARENT.mkdir(exist_ok=True)
@@ -28,6 +30,18 @@ os.environ["EMBED_ENABLED"] = "false"
 sys.path.insert(0, str(Path(__file__).parent))
 
 from nouz_mcp import server  # noqa: E402
+from nouz_mcp._version import __version__  # noqa: E402
+from nouz_mcp.markdown import dump_metadata, sync_parents_fields  # noqa: E402
+from nouz_mcp.paths import default_db_path, safe_path  # noqa: E402
+from nouz_mcp.serialization import serialize  # noqa: E402
+from nouz_mcp.signs import determine_artifact_sign  # noqa: E402
+from nouz_mcp.sqlite_store import (  # noqa: E402
+    check_cycle_exists as store_check_cycle_exists,
+    find_orphaned_links as store_find_orphaned_links,
+    get_db_children as store_get_db_children,
+    get_db_parents as store_get_db_parents,
+)
+from nouz_mcp.vectors import cosine, mean_center  # noqa: E402
 
 TEST_ROOT = Path(os.environ["OBSIDIAN_ROOT"])
 DB_PATH = str(TEST_ROOT / server.DATABASE_NAME)
@@ -61,7 +75,7 @@ def make_md(rel_path: str, content: str = "", **meta) -> Path:
     """Write a markdown file with YAML frontmatter to TEST_ROOT."""
     p = TEST_ROOT / rel_path
     p.parent.mkdir(parents=True, exist_ok=True)
-    meta_str = server._dump_metadata(meta) if meta else ""
+    meta_str = dump_metadata(meta) if meta else ""
     text = f"---\n{meta_str}\n---\n{content}" if meta_str else content
     p.write_text(text, encoding="utf-8")
     return p
@@ -72,7 +86,8 @@ def make_md(rel_path: str, content: str = "", **meta) -> Path:
 async def test_version():
     section("VERSION")
     try:
-        assert server.VERSION == "3.0.3", f"Expected 3.0.3, got {server.VERSION}"
+        assert __version__ == "3.1.0", f"Expected 3.1.0, got {__version__}"
+        assert server.VERSION == __version__, f"Expected {__version__}, got {server.VERSION}"
         ok(f"VERSION == {server.VERSION}")
     except AssertionError as e:
         fail("VERSION check", str(e))
@@ -103,7 +118,13 @@ async def test_artifact_sign_russian_keywords():
         ("https://example.com/reference", "r"),
     ]
     for content, expected in cases:
-        got = server._determine_artifact_sign(content, {})
+        got = determine_artifact_sign(
+            content,
+            {},
+            server.ARTIFACT_SIGN_BY_NAME,
+            server.ARTIFACT_KEYWORDS_BY_NAME,
+            server.DEFAULT_ARTIFACT_KEYWORDS,
+        )
         try:
             assert got == expected, f"{content!r}: expected {expected}, got {got}"
             ok(f"{content[:24]!r} -> {got}")
@@ -112,16 +133,16 @@ async def test_artifact_sign_russian_keywords():
 
 
 async def test_safe_path():
-    section("_safe_path (path traversal guard)")
+    section("safe_path (path traversal guard)")
     root = str(TEST_ROOT)
 
-    p = server._safe_path(root, "notes/test.md")
+    p = safe_path(root, "notes/test.md")
     if p is not None:
         ok("valid relative path accepted")
     else:
         fail("valid path", "returned None for valid path")
 
-    p2 = server._safe_path(root, "../../etc/passwd")
+    p2 = safe_path(root, "../../etc/passwd")
     if p2 is None:
         ok("path traversal blocked")
     else:
@@ -129,7 +150,7 @@ async def test_safe_path():
 
 
 async def test_dump_metadata():
-    section("_dump_metadata (YAML serialization)")
+    section("dump_metadata (YAML serialization)")
 
     meta = {
         "type": "quant",
@@ -140,7 +161,7 @@ async def test_dump_metadata():
         "parents": ["Science"],
     }
     try:
-        result = server._dump_metadata(meta)
+        result = dump_metadata(meta)
         assert "type: quant" in result
         assert "level: 4" in result
         assert "sign: T" in result
@@ -148,15 +169,15 @@ async def test_dump_metadata():
         assert "- Science" in result
         ok("basic metadata serialized")
     except AssertionError as e:
-        fail("_dump_metadata basic", str(e))
+        fail("dump_metadata basic", str(e))
 
     meta2 = {"type": "quant", "level": 4, "sign": "T", "parents": ["My: Special#Note"]}
     try:
-        result2 = server._dump_metadata(meta2)
+        result2 = dump_metadata(meta2)
         assert "My: Special#Note" in result2
         ok("special chars in parent name")
     except AssertionError as e:
-        fail("_dump_metadata special chars", str(e))
+        fail("dump_metadata special chars", str(e))
 
     try:
         lines = result.split("\n")
@@ -170,7 +191,7 @@ async def test_dump_metadata():
 
 
 async def test_dump_metadata_whitelist():
-    section("_dump_metadata whitelist (internal fields excluded)")
+    section("dump_metadata whitelist (internal fields excluded)")
 
     meta = {
         "type": "quant",
@@ -184,7 +205,7 @@ async def test_dump_metadata_whitelist():
         "parents": ["Science"],
     }
     try:
-        result = server._dump_metadata(meta)
+        result = dump_metadata(meta)
         assert "sign_source" not in result, "sign_source leaked into YAML"
         assert "sign_auto" not in result, "sign_auto leaked into YAML"
         assert "core_mix" not in result, "core_mix leaked into YAML"
@@ -196,23 +217,23 @@ async def test_dump_metadata_whitelist():
         assert "parents:" in result
         ok("whitelist blocks sign_source, sign_auto, core_mix, path, content")
     except AssertionError as e:
-        fail("_dump_metadata whitelist", str(e))
+        fail("dump_metadata whitelist", str(e))
 
     metadata = {"type": "artifact", "level": 5, "sign": "B", "tags": "None", "parents": [], "parents_meta": []}
-    dumped = server._dump_metadata(metadata)
+    dumped = dump_metadata(metadata)
     try:
         assert "tags: None" not in dumped, dumped
         assert "parents:" not in dumped, dumped
         ok("None and empty YAML fields are omitted")
     except AssertionError as e:
-        fail("_dump_metadata empty values", str(e))
+        fail("dump_metadata empty values", str(e))
 
 
 async def test_sync_parents_fields():
-    section("_sync_parents_fields")
+    section("sync_parents_fields")
 
     meta = {"parents": ["Science", "Math"]}
-    synced = server._sync_parents_fields(meta)
+    synced = sync_parents_fields(meta)
     try:
         assert synced["parents"] == ["Science", "Math"]
         ok("plain parents preserved")
@@ -223,7 +244,7 @@ async def test_sync_parents_fields():
         "parents_meta": [{"entity": "Science", "link_type": "hierarchy"}],
         "parents": ["OldValue"]
     }
-    synced2 = server._sync_parents_fields(meta2)
+    synced2 = sync_parents_fields(meta2)
     try:
         assert synced2["parents"] == ["Science"]
         ok("parents_meta takes precedence over parents")
@@ -232,7 +253,7 @@ async def test_sync_parents_fields():
 
 
 async def test_cosine():
-    section("_cosine (vector similarity)")
+    section("cosine (vector similarity)")
 
     v1 = [1.0, 0.0, 0.0]
     v2 = [1.0, 0.0, 0.0]
@@ -240,40 +261,40 @@ async def test_cosine():
     v4 = [-1.0, 0.0, 0.0]
 
     try:
-        assert abs(server._cosine(v1, v2) - 1.0) < 1e-6
+        assert abs(cosine(v1, v2) - 1.0) < 1e-6
         ok("identical vectors -> cosine = 1.0")
     except AssertionError as e:
         fail("cosine identical", str(e))
 
     try:
-        assert abs(server._cosine(v1, v3)) < 1e-6
+        assert abs(cosine(v1, v3)) < 1e-6
         ok("orthogonal vectors -> cosine = 0.0")
     except AssertionError as e:
         fail("cosine orthogonal", str(e))
 
     try:
-        assert abs(server._cosine(v1, v4) + 1.0) < 1e-6
+        assert abs(cosine(v1, v4) + 1.0) < 1e-6
         ok("opposite vectors -> cosine = -1.0")
     except AssertionError as e:
         fail("cosine opposite", str(e))
 
     try:
-        assert server._cosine([], []) == 0.0
-        assert server._cosine([1.0], []) == 0.0
+        assert cosine([], []) == 0.0
+        assert cosine([1.0], []) == 0.0
         ok("empty vectors handled gracefully")
     except AssertionError as e:
         fail("cosine empty", str(e))
 
 
 async def test_mean_center():
-    section("_mean_center (anisotropy correction)")
+    section("mean_center (anisotropy correction)")
 
     vecs = {
         "A": [1.0, 0.0],
         "B": [0.0, 1.0],
     }
     try:
-        centered = server._mean_center(vecs)
+        centered = mean_center(vecs)
         assert len(centered) == 2
         mean = [0.5, 0.5]
         for k in centered:
@@ -282,15 +303,15 @@ async def test_mean_center():
                 assert abs(centered[k][i] - expected[i]) < 1e-6
         ok("mean subtracted correctly from 2 vectors")
     except AssertionError as e:
-        fail("_mean_center", str(e))
+        fail("mean_center", str(e))
 
     single = {"X": [3.0, 4.0]}
     try:
-        result = server._mean_center(single)
+        result = mean_center(single)
         assert result == single
         ok("single vector passes through unchanged")
     except AssertionError as e:
-        fail("_mean_center single", str(e))
+        fail("mean_center single", str(e))
 
 
 async def test_db_init():
@@ -317,13 +338,13 @@ async def test_default_db_path_env():
         server.DATABASE_PATH = ""
         server.DATABASE_NAME = "obsidian_kb.public.db"
         expected = os.path.join(server.OBSIDIAN_ROOT, "obsidian_kb.public.db")
-        assert server._default_db_path() == expected, "NOUZ_DATABASE_NAME was not applied"
+        assert default_db_path(server.OBSIDIAN_ROOT, server.DATABASE_NAME, server.DATABASE_PATH) == expected, "NOUZ_DATABASE_NAME was not applied"
 
         server.DATABASE_PATH = str(TEST_ROOT / "custom.db")
-        assert server._default_db_path() == server.DATABASE_PATH, "NOUZ_DATABASE_PATH should take precedence"
+        assert default_db_path(server.OBSIDIAN_ROOT, server.DATABASE_NAME, server.DATABASE_PATH) == server.DATABASE_PATH, "NOUZ_DATABASE_PATH should take precedence"
         ok("database name/path can be overridden for isolated public tests")
     except AssertionError as e:
-        fail("_default_db_path", str(e))
+        fail("default_db_path", str(e))
     finally:
         server.DATABASE_NAME = old_name
         server.DATABASE_PATH = old_path
@@ -429,19 +450,19 @@ async def test_parent_child_links():
     except AssertionError as e:
         fail("parent-child link", str(e))
 
-    children = await server._get_db_children(DB_PATH, str(parent_p))
+    children = await store_get_db_children(DB_PATH, str(parent_p))
     try:
         assert str(child_p) in children, f"child not in children list: {children}"
-        ok("_get_db_children returns child")
+        ok("store_get_db_children returns child")
     except AssertionError as e:
-        fail("_get_db_children", str(e))
+        fail("store_get_db_children", str(e))
 
-    parents = await server._get_db_parents(DB_PATH, str(child_p))
+    parents = await store_get_db_parents(DB_PATH, str(child_p))
     try:
         assert any(p.get("entity") == "ParentNote" for p in parents), f"parent not found: {parents}"
-        ok("_get_db_parents returns parent")
+        ok("store_get_db_parents returns parent")
     except AssertionError as e:
-        fail("_get_db_parents", str(e))
+        fail("store_get_db_parents", str(e))
 
 
 async def test_write_preserves_body_by_default():
@@ -504,7 +525,7 @@ async def test_recalc_keeps_l4_sign_separate_from_child_artifacts():
         server._determine_core_by_embedding = old_determine_core
 
     data = await server.read_file_with_metadata(quant)
-    async with server.aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT sign, artifact_sign FROM files WHERE path = ?", (str(quant),)) as cur:
             db_sign, db_artifact_sign = await cur.fetchone()
 
@@ -651,14 +672,14 @@ async def test_cycle_detection():
         DB_PATH
     )
 
-    has_cycle = await server._check_cycle_exists(DB_PATH, str(b), str(a))
+    has_cycle = await store_check_cycle_exists(DB_PATH, str(b), str(a))
     try:
         assert has_cycle, "cycle not detected"
         ok("cycle A->B->A detected correctly")
     except AssertionError as e:
         fail("cycle detection", str(e))
 
-    no_cycle = await server._check_cycle_exists(DB_PATH, str(a), str(b))
+    no_cycle = await store_check_cycle_exists(DB_PATH, str(a), str(b))
     try:
         ok(f"non-cycle check: {no_cycle} (normal direction)")
     except Exception as e:
@@ -666,26 +687,26 @@ async def test_cycle_detection():
 
 
 async def test_serialize():
-    section("_serialize (date handling)")
+    section("serialize (date handling)")
     from datetime import date, datetime
 
     try:
         d = date(2026, 4, 7)
-        assert server._serialize(d) == "2026-04-07"
+        assert serialize(d) == "2026-04-07"
         ok("date serialized to ISO string")
     except AssertionError as e:
         fail("date serialize", str(e))
 
     try:
         dt = datetime(2026, 4, 7, 12, 0, 0)
-        assert server._serialize(dt) == "2026-04-07T12:00:00"
+        assert serialize(dt) == "2026-04-07T12:00:00"
         ok("datetime serialized to ISO string")
     except AssertionError as e:
         fail("datetime serialize", str(e))
 
     try:
-        assert server._serialize("hello") == "hello"
-        assert server._serialize(42) == 42
+        assert serialize("hello") == "hello"
+        assert serialize(42) == 42
         ok("non-date passthrough unchanged")
     except AssertionError as e:
         fail("serialize passthrough", str(e))
@@ -728,7 +749,7 @@ async def test_orphaned_links():
         )
         await db.commit()
 
-    orphans = await server._find_orphaned_links(DB_PATH)
+    orphans = await store_find_orphaned_links(DB_PATH)
     ghost_orphans = [o for o in orphans if o["missing_parent"] == ghost_parent]
     try:
         assert len(ghost_orphans) >= 1, f"Ghost parent not detected. All orphans: {orphans}"
@@ -737,26 +758,6 @@ async def test_orphaned_links():
         fail("orphaned links", str(e))
 
 
-async def test_dedup_by_sign():
-    section("_dedup_by_sign (sign aggregation)")
-
-    if not hasattr(server, '_dedup_by_sign'):
-        ok("_dedup_by_sign not in luca mode (skipped)")
-        return
-
-    try:
-        items = [
-            {"sign": "T", "name": "a"},
-            {"sign": "T", "name": "b"},
-            {"sign": "S", "name": "c"},
-            {"sign": "T", "name": "d"},
-        ]
-        result = server._dedup_by_sign(items)
-        signs_only = [r.get("sign", r) if isinstance(r, dict) else r for r in result]
-        assert signs_only == ["T", "S"], f"Expected ['T', 'S'], got {signs_only}"
-        ok("_dedup_by_sign aggregates signs with count")
-    except Exception as e:
-        fail("_dedup_by_sign", str(e))
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
@@ -792,7 +793,6 @@ async def main():
     await test_serialize()
     await test_list_files()
     await test_orphaned_links()
-    await test_dedup_by_sign()
 
     print(f"\n{'-'*42}")
     total = PASS + FAIL

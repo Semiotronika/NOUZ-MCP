@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nouz-mcp"
-version = "3.0.3"
+dynamic = ["version"]
 description = "MCP server for Obsidian — semantic knowledge graph with auto-classification, DAG hierarchy, and cross-domain bridge detection"
 readme = "README_EN.md"
 license = "MIT"
@@ -26,7 +26,6 @@ classifiers = [
 dependencies = [
     "mcp>=1.0.0",
     "aiofiles>=23.0.0",
-    "python-frontmatter>=1.0.0",
     "pyyaml>=6.0",
     "aiohttp>=3.9.0",
     "aiosqlite>=0.19.0",
@@ -36,6 +35,7 @@ dependencies = [
 Homepage = "https://semiotronika.ru"
 Repository = "https://github.com/Semiotronika/NOUZ-MCP"
 Documentation = "https://github.com/Semiotronika/NOUZ-MCP#readme"
+"Changelog" = "https://github.com/Semiotronika/NOUZ-MCP/blob/main/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/Semiotronika/NOUZ-MCP/issues"
 
 [project.optional-dependencies]
@@ -46,6 +46,10 @@ dev = [
 
 [project.scripts]
 nouz-mcp = "nouz_mcp.server:main"
+nouz-calc-etalons = "nouz_mcp.calc_etalons:main"
 
 [tool.setuptools]
 packages = ["nouz_mcp"]
+
+[tool.setuptools.dynamic]
+version = {attr = "nouz_mcp._version.__version__"}

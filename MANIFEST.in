@@ -1,6 +1,7 @@
 include LICENSE
 include README.md
 include README_EN.md
+include CHANGELOG.md
 include server.py
 include server.json
 include glama.json
@@ -12,3 +13,4 @@ include test_server.py
 include pytest_smoke.py
 recursive-include asset *
 recursive-include scripts *.py
+recursive-include docs *.md
