@@ -162,6 +162,14 @@ def explicit_tag_list(metadata: Dict[str, Any]) -> list[str]:
     return explicit_tag_report(metadata)["tags"]
 
 
+def tag_match_key(value: Any) -> str:
+    """Return a loose token key for matching tag slugs against free text."""
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return ""
+    raw = unicodedata.normalize("NFKC", str(value)).strip().lower()
+    return _slugify_tag(raw).replace("/", "-")
+
+
 def _yaml_str(s: str) -> str:
     if any(c in s for c in ':#{}[]|>&*!,\'\"\\'):
         escaped = s.replace("'", "''")

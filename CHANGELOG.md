@@ -36,6 +36,9 @@
   such as hex colors, URLs, numeric-only tokens, and placeholders are rejected.
 - `suggest_metadata` now includes `tag_quality`, a read-only diagnostic showing
   which explicit tags were accepted and which raw values were discarded.
+- `suggest_metadata` now also proposes read-only `tag_candidates` from the
+  existing YAML tag vocabulary and explicit inline hashtags, plus
+  `candidate_tag_bridges` that would become valid if those tags are accepted.
 
 ### Verification
 

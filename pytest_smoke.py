@@ -68,6 +68,7 @@ from nouz_mcp.use_cases import read_file as read_file_use_case  # noqa: E402
 from nouz_mcp.use_cases import recalc_core_mix as recalc_core_mix_use_case  # noqa: E402
 from nouz_mcp.use_cases import recalc_signs as recalc_signs_use_case  # noqa: E402
 from nouz_mcp.use_cases import search_chunk_embeddings as search_chunk_embeddings_use_case  # noqa: E402
+from nouz_mcp.use_cases import suggest_tag_candidates as suggest_tag_candidates_use_case  # noqa: E402
 from nouz_mcp.use_cases import suggest_tag_bridges as suggest_tag_bridges_use_case  # noqa: E402
 from nouz_mcp.use_cases import suggest_metadata as suggest_metadata_use_case  # noqa: E402
 from nouz_mcp.use_cases import suggest_parents as suggest_parents_use_case  # noqa: E402
@@ -1354,6 +1355,47 @@ def test_suggest_tag_bridges_use_case_uses_canonical_explicit_tags():
     asyncio.run(scenario())
 
 
+def test_suggest_tag_candidates_use_case_is_read_only_and_vocabulary_based():
+    rows = [
+        ("own.md", "S", "", json.dumps(["graph"])),
+        ("agent.md", "S", "", json.dumps(["agent-context", "graph"])),
+        ("theory.md", "D", "", json.dumps(["recursive-theory"])),
+        ("broken.md", "D", "", "not-json"),
+    ]
+
+    candidates = suggest_tag_candidates_use_case(
+        "# Heading\n\nThis note is about agent context and recursive theory. #New_Tag #FF00A1\n"
+        "```python\n#not-a-tag\n```\n",
+        ["graph"],
+        rows,
+    )
+
+    assert candidates == [
+        {
+            "tag": "new-tag",
+            "source": "inline",
+            "confidence": 0.9,
+            "reason": "explicit inline hashtag in note body",
+        },
+        {
+            "tag": "agent-context",
+            "source": "vocabulary",
+            "confidence": 0.66,
+            "reason": "content matches an existing YAML tag",
+            "usage_count": 1,
+            "example_entity": "agent",
+        },
+        {
+            "tag": "recursive-theory",
+            "source": "vocabulary",
+            "confidence": 0.66,
+            "reason": "content matches an existing YAML tag",
+            "usage_count": 1,
+            "example_entity": "theory",
+        },
+    ]
+
+
 def test_suggest_metadata_use_case_wires_layers():
     async def scenario():
         calls = {"saved": None}
@@ -1362,7 +1404,7 @@ def test_suggest_metadata_use_case_wires_layers():
             return False
 
         async def get_embedding(text: str):
-            assert text == "body"
+            assert text == "body with other"
             return [1.0, 0.0]
 
         async def save_embedding(db_path: str, path: str, vec: list[float]):
@@ -1387,7 +1429,10 @@ def test_suggest_metadata_use_case_wires_layers():
             return [{"entity": "Bridge", "link_type": "semantic"}]
 
         async def list_tag_bridge_rows(db_path: str):
-            return [("tagged.md", "S", "", json.dumps(["tag", "other"]))]
+            return [
+                ("tagged.md", "S", "", json.dumps(["tag", "other"])),
+                ("candidate.md", "S", "", json.dumps(["other"])),
+            ]
 
         async def resolve_entity_path(db_path: str, entity: str):
             assert entity == "Parent"
@@ -1409,7 +1454,7 @@ def test_suggest_metadata_use_case_wires_layers():
             return {"S": 90.0}
 
         result = await suggest_metadata_use_case(
-            "body",
+            "body with other",
             {
                 "type": "quant",
                 "level": 4,
@@ -1447,6 +1492,16 @@ def test_suggest_metadata_use_case_wires_layers():
         assert result["artifact_sign"] == "n"
         assert result["tags"] == ["tag"]
         assert result["tag_quality"] == {"tags": ["tag"], "dropped": []}
+        assert result["tag_candidates"] == [
+            {
+                "tag": "other",
+                "source": "vocabulary",
+                "confidence": 0.69,
+                "reason": "content matches an existing YAML tag",
+                "usage_count": 2,
+                "example_entity": "tagged",
+            }
+        ]
         assert result["semantic_bridges"] == [
             {"entity": "Bridge", "link_type": "semantic", "proposed": True}
         ]
@@ -1459,6 +1514,26 @@ def test_suggest_metadata_use_case_wires_layers():
                 "reason": "shared explicit tags: tag",
                 "proposed": True,
             }
+        ]
+        assert result["candidate_tag_bridges"] == [
+            {
+                "entity": "candidate",
+                "link_type": "tag",
+                "strength": 1.0,
+                "tags": ["other"],
+                "reason": "shared explicit tags: other",
+                "proposed": True,
+                "requires_tag_acceptance": True,
+            },
+            {
+                "entity": "tagged",
+                "link_type": "tag",
+                "strength": 0.5,
+                "tags": ["other"],
+                "reason": "shared explicit tags: other",
+                "proposed": True,
+                "requires_tag_acceptance": True,
+            },
         ]
         assert any(error.get("type") == "cycle_error" for error in result["errors"])
         assert result["core_percentages"] == {"D": 80.0, "S": 20.0}

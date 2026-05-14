@@ -1051,7 +1051,7 @@ async def run_server():
             types.Tool(
                 name="suggest_metadata",
                 description="Analyze one note and propose knowledge-graph metadata for review. Returns suggested domain sign, "
-                            "material type, hierarchy level, explicit tags, tag quality, bridge candidates, and hierarchy warnings. Use this before "
+                            "material type, hierarchy level, explicit tags, tag quality, tag candidates, bridge candidates, and hierarchy warnings. Use this before "
                             "write_file when you want classification help, or to audit an existing note. It is read-only and never "
                             "edits YAML. Semantic fields require embeddings and are available in PRIZMA/SLOI modes. The optional "
                             "context object lets an agent test metadata overrides without changing the note.",
@@ -1067,7 +1067,7 @@ async def run_server():
                                 "level": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5]},
                                 "sign": {"type": "string", "description": "Candidate domain sign to evaluate."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Candidate parent wiki links."},
-                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags for what-if analysis. They are normalized to canonical slug form; NOUZ does not infer tags."}
+                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags for what-if analysis. They are normalized to canonical slug form. NOUZ may suggest tag candidates, but does not write inferred tags."}
                             }
                         }
                     },

@@ -140,6 +140,12 @@ YAML tags are explicit metadata: NOUZ normalizes them to canonical slug form
 hex colors, URLs, numeric-only tokens, empty values, and `none`/`null`.
 `suggest_metadata` returns `tag_quality` so an agent can see which tags are
 accepted for future `tag_bridges` and which raw values were discarded.
+For tag automation, `suggest_metadata` also returns read-only `tag_candidates`:
+candidates from the already accepted YAML tag vocabulary in the index and
+explicit inline `#tag` markers in the note body. Candidates are not written to
+YAML automatically; once accepted through `update_metadata`, normal
+`tag_bridges` work from those tags. Before writing, possible links are returned
+separately as `candidate_tag_bridges`.
 
 ---
 

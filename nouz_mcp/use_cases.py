@@ -2,10 +2,11 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
-from nouz_mcp.markdown import explicit_tag_list, explicit_tag_report
+from nouz_mcp.markdown import canonical_tag, explicit_tag_list, explicit_tag_report, tag_match_key
 
 
 ReadFile = Callable[[Path], Awaitable[Dict[str, Any]]]
@@ -53,6 +54,7 @@ UpdateCoreMixes = Callable[[str, List[tuple[str, str]]], Awaitable[None]]
 DetermineArtifactSign = Callable[[str, Dict[str, Any]], str]
 ReadArtifactSign = Callable[[str], str]
 UpdateSignRecalcRows = Callable[[str, List[tuple[str, str, str, str, str]], List[tuple[str, str]]], Awaitable[None]]
+INLINE_TAG_RE = re.compile(r"(?<![\w])#([^\s#.,;:!?()[\]{}<>`'\"|]+)")
 
 
 async def index_all_files(
@@ -206,12 +208,24 @@ async def suggest_tag_bridges(
     top_n: int = 10,
 ) -> List[Dict[str, Any]]:
     """Suggest read-only tag links from shared canonical explicit YAML tags."""
+    rows = await list_tag_bridge_rows(db_path)
+    return build_tag_bridges_from_rows(rows, own_path, own_tags, top_n=top_n)
+
+
+def build_tag_bridges_from_rows(
+    rows: List[tuple[str, str, str, str]],
+    own_path: str,
+    own_tags: List[str],
+    *,
+    top_n: int = 10,
+) -> List[Dict[str, Any]]:
+    """Build read-only tag link suggestions from preloaded index rows."""
     own_tag_set = set(explicit_tag_list({"tags": own_tags}))
     if not own_tag_set:
         return []
 
     bridges: List[Dict[str, Any]] = []
-    for path, _sign, _artifact_sign, tags_json in await list_tag_bridge_rows(db_path):
+    for path, _sign, _artifact_sign, tags_json in rows:
         if path == own_path:
             continue
         try:
@@ -236,6 +250,100 @@ async def suggest_tag_bridges(
 
     bridges.sort(key=lambda item: (-len(item["tags"]), -item["strength"], item["entity"]))
     return bridges[: max(1, min(int(top_n), 50))]
+
+
+def suggest_tag_candidates(
+    content: str,
+    own_tags: List[str],
+    tag_rows: List[tuple[str, str, str, str]],
+    *,
+    own_path: str = "",
+    top_n: int = 12,
+) -> List[Dict[str, Any]]:
+    """Suggest read-only tag candidates from inline tags and known YAML tag vocabulary."""
+    accepted = set(explicit_tag_list({"tags": own_tags}))
+    candidates: Dict[str, Dict[str, Any]] = {}
+
+    for tag in _extract_inline_tags(content):
+        if tag in accepted:
+            continue
+        candidates[tag] = {
+            "tag": tag,
+            "source": "inline",
+            "confidence": 0.9,
+            "reason": "explicit inline hashtag in note body",
+        }
+
+    vocabulary = _build_tag_vocabulary(tag_rows, own_path=own_path)
+    match_text = f"-{tag_match_key(content)}-"
+    for tag, info in vocabulary.items():
+        if tag in accepted or tag in candidates:
+            continue
+        key = tag_match_key(tag)
+        if not key:
+            continue
+        needle = f"-{key}-"
+        occurrences = match_text.count(needle)
+        if occurrences <= 0:
+            continue
+        usage_count = int(info["count"])
+        confidence = min(0.92, 0.55 + min(occurrences, 3) * 0.08 + min(usage_count, 5) * 0.03)
+        candidates[tag] = {
+            "tag": tag,
+            "source": "vocabulary",
+            "confidence": round(confidence, 2),
+            "reason": "content matches an existing YAML tag",
+            "usage_count": usage_count,
+            "example_entity": info["example_entity"],
+        }
+
+    result = list(candidates.values())
+    result.sort(key=lambda item: (-float(item["confidence"]), item["source"], item["tag"]))
+    return result[: max(1, min(int(top_n), 50))]
+
+
+def _extract_inline_tags(content: str) -> List[str]:
+    tags: List[str] = []
+    seen: set[str] = set()
+    in_fence = False
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence or re.match(r"^\s{0,3}#{1,6}\s+", line):
+            continue
+        for match in INLINE_TAG_RE.finditer(line):
+            tag = canonical_tag(match.group(1))
+            if tag and tag not in seen:
+                tags.append(tag)
+                seen.add(tag)
+    return tags
+
+
+def _build_tag_vocabulary(
+    rows: List[tuple[str, str, str, str]],
+    *,
+    own_path: str = "",
+) -> Dict[str, Dict[str, Any]]:
+    vocabulary: Dict[str, Dict[str, Any]] = {}
+    for path, _sign, _artifact_sign, tags_json in rows:
+        if own_path and path == own_path:
+            continue
+        try:
+            raw_tags = json.loads(tags_json) if isinstance(tags_json, str) else tags_json
+        except Exception:
+            continue
+        for tag in explicit_tag_list({"tags": raw_tags}):
+            entry = vocabulary.setdefault(
+                tag,
+                {
+                    "count": 0,
+                    "example_entity": Path(path).stem,
+                },
+            )
+            entry["count"] += 1
+    return vocabulary
 
 
 async def list_files(
@@ -530,6 +638,16 @@ async def suggest_metadata(
 
     semantic_bridges = []
     tag_bridges = []
+    candidate_tag_bridges = []
+    tag_candidates = []
+    tag_rows: List[tuple[str, str, str, str]] = []
+    if db_path:
+        try:
+            tag_rows = await list_tag_bridge_rows(db_path)
+        except Exception:
+            tag_rows = []
+    if content:
+        tag_candidates = suggest_tag_candidates(content, tags, tag_rows, own_path=str(file_path))
     vec = []
     if file_path and reference_vectors:
         if not await embedding_is_fresh(db_path, file_path):
@@ -550,12 +668,10 @@ async def suggest_metadata(
             db_path, str(file_path), actual_sign, vec, sign_source
         )
     if file_path and tags:
-        tag_bridges = await suggest_tag_bridges(
-            db_path,
-            str(file_path),
-            tags,
-            list_tag_bridge_rows=list_tag_bridge_rows,
-        )
+        tag_bridges = build_tag_bridges_from_rows(tag_rows, str(file_path), tags)
+    candidate_tags = [candidate["tag"] for candidate in tag_candidates]
+    if file_path and candidate_tags:
+        candidate_tag_bridges = build_tag_bridges_from_rows(tag_rows, str(file_path), candidate_tags)
 
     errors = check_hierarchy(type_, parents_obj)
 
@@ -584,6 +700,7 @@ async def suggest_metadata(
         "status": meta.get("status", "draft"),
         "tags": tags,
         "tag_quality": tag_report,
+        "tag_candidates": tag_candidates,
         "parents": meta.get("parents", []),
         "parents_meta": parents_obj,
         "errors": errors,
@@ -592,6 +709,10 @@ async def suggest_metadata(
         ],
         "tag_bridges": [
             {**bridge, "proposed": True} for bridge in tag_bridges
+        ],
+        "candidate_tag_bridges": [
+            {**bridge, "proposed": True, "requires_tag_acceptance": True}
+            for bridge in candidate_tag_bridges
         ],
     }
 
