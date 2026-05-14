@@ -20,6 +20,8 @@
 - Clarified chunk span metadata: `start_char`/`end_char` now bound the returned
   chunk text including overlap, while `body_start_char`/`body_end_char` mark the
   non-overlap body span.
+- Chunk ids now use vault-relative source identifiers, so preview chunks from
+  `chunk_file` and indexed chunks from `index_all` share the same id contract.
 - Chunking now ignores Markdown headings inside fenced code blocks.
 - In `NOUZ_READ_ONLY=true`, read-only tools no longer refresh the SQLite cache
   unless `NOUZ_CACHE_WRITE=true` is set; startup DB init/index/calibration is

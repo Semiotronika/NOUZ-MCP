@@ -1396,9 +1396,10 @@ async def run_server():
                     return [types.TextContent(type="text", text=f"File not found: {rel}")]
                 data = await read_file_with_metadata(full)
                 content = data.get("content", "")
+                source_id = full.relative_to(Path(OBSIDIAN_ROOT)).as_posix()
                 chunks = chunk_markdown(
                     content,
-                    source_id=rel,
+                    source_id=source_id,
                     max_chars=int(args.get("max_chars", 1200)),
                     overlap_chars=int(args.get("overlap_chars", 120)),
                 )

@@ -705,6 +705,7 @@ def test_index_all_use_case_wires_layers(tmp_path):
             return False
 
         async def save_chunk_embeddings(db_path: str, path: str, chunks: list[dict], vectors: list[list[float]]):
+            assert chunks[0]["source_id"] == "keep.md"
             calls["chunks"].append((Path(path).name, len(chunks), vectors))
 
         async def delete_missing_entries(db_path: str, seen_paths: set[str]):

@@ -110,9 +110,10 @@ async def index_all_files(
                     if not content:
                         await save_chunk_embeddings(db_path, str(path), [], [])
                     elif not await chunk_embeddings_are_fresh(db_path, str(path)):
+                        source_id = path.relative_to(root).as_posix()
                         chunks = chunk_markdown(
                             content,
-                            source_id=str(path),
+                            source_id=source_id,
                             max_chars=chunk_max_chars,
                             overlap_chars=chunk_overlap_chars,
                         )
