@@ -28,6 +28,9 @@
   tags, `add_entity`/`process_orphans` do not write generated tags, and
   `suggest_metadata` keeps `tag_bridges` empty instead of proposing automatic
   tag-based links.
+- Tag handling is centralized through explicit YAML `tags`: blank/duplicate
+  values are dropped, leading `#` is stripped for YAML storage, and legacy
+  `concepts` values are not promoted into indexed tags.
 
 ### Verification
 

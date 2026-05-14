@@ -18,7 +18,7 @@ from nouz_mcp._version import __version__  # noqa: E402
 from nouz_mcp import calc_etalons  # noqa: E402
 from nouz_mcp.chunks import chunk_markdown  # noqa: E402
 from nouz_mcp.links import check_parents_exist, get_parents_meta  # noqa: E402
-from nouz_mcp.markdown import dump_metadata, parse_frontmatter, split_frontmatter_raw, sync_parents_fields  # noqa: E402
+from nouz_mcp.markdown import dump_metadata, explicit_tag_list, parse_frontmatter, split_frontmatter_raw, sync_parents_fields  # noqa: E402
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level  # noqa: E402
 from nouz_mcp.paths import default_db_path, safe_path  # noqa: E402
 from nouz_mcp.serialization import serialize  # noqa: E402
@@ -216,6 +216,18 @@ def test_metadata_dump_does_not_write_internal_fields():
     assert "content:" not in dumped
     assert "path:" not in dumped
     assert "core_mix:" not in dumped
+
+
+def test_explicit_tag_list_ignores_legacy_concepts():
+    assert explicit_tag_list({"concepts": ["dirty", "legacy"]}) == []
+    assert explicit_tag_list({"tags": [" graph ", "", None, "graph"], "concepts": ["legacy"]}) == ["graph"]
+    assert explicit_tag_list({"tags": "manual"}) == ["manual"]
+
+    dumped = dump_metadata({"type": "quant", "level": 4, "sign": "S", "tags": [" graph ", "#search", "", None]})
+    assert "tags:" in dumped
+    assert "- graph" in dumped
+    assert "- search" in dumped
+    assert "#search" not in dumped
 
 
 def test_extracted_helpers_match_server_contract(tmp_path):
@@ -425,6 +437,26 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
                 row = await cur.fetchone()
         assert row is not None
         assert json.loads(row[0]) == ["graph"]
+
+        concepts_only_path = tmp_path / "concepts-only.md"
+        await store_index_file(
+            db_path,
+            concepts_only_path,
+            {
+                "type": "quant",
+                "level": 4,
+                "sign": "S",
+                "content": "Legacy body",
+                "concepts": ["dirty", "legacy"],
+            },
+            get_parents_meta=get_parents_meta,
+            resolve_entity_path=lambda entity: asyncio.sleep(0, result=f"{entity}.md"),
+        )
+        async with aiosqlite.connect(db_path) as db:
+            async with db.execute("SELECT tags FROM files WHERE path = ?", (str(concepts_only_path),)) as cur:
+                row = await cur.fetchone()
+        assert row is not None
+        assert json.loads(row[0]) == []
         async with aiosqlite.connect(db_path) as db:
             await db.executemany(
                 "UPDATE files SET sign = ? WHERE path = ?",

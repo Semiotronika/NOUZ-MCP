@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
+from nouz_mcp.markdown import explicit_tag_list
+
 
 ReadFile = Callable[[Path], Awaitable[Dict[str, Any]]]
 IndexFile = Callable[[str, Path, Dict[str, Any]], Awaitable[None]]
@@ -50,16 +52,6 @@ UpdateCoreMixes = Callable[[str, List[tuple[str, str]]], Awaitable[None]]
 DetermineArtifactSign = Callable[[str, Dict[str, Any]], str]
 ReadArtifactSign = Callable[[str], str]
 UpdateSignRecalcRows = Callable[[str, List[tuple[str, str, str, str, str]], List[tuple[str, str]]], Awaitable[None]]
-
-
-def _explicit_tag_list(meta: Dict[str, Any]) -> List[str]:
-    """Return only tags explicitly present in metadata."""
-    raw = meta.get("tags", [])
-    if raw in (None, "", "None"):
-        return []
-    if isinstance(raw, list):
-        return [str(tag).strip() for tag in raw if str(tag).strip()]
-    return [str(raw).strip()] if str(raw).strip() else []
 
 
 async def index_all_files(
@@ -489,7 +481,7 @@ async def suggest_metadata(
     type_ = determine_type(content, meta)
     parents_obj = get_parents_meta(meta)
 
-    tags = _explicit_tag_list(meta)
+    tags = explicit_tag_list(meta)
 
     semantic_bridges = []
     vec = []
@@ -829,7 +821,7 @@ async def process_orphans(
                 "artifact_sign": frontmatter.get("artifact_sign", ""),
             }
 
-        tags = _explicit_tag_list(frontmatter)
+        tags = explicit_tag_list(frontmatter)
 
         parents_meta = get_parents_meta(frontmatter)
         parents_auto = False
@@ -936,7 +928,7 @@ async def add_entity(
     if sign_result.get("artifact_sign"):
         metadata["artifact_sign"] = sign_result["artifact_sign"]
 
-    tags = [str(tag).strip() for tag in explicit_tags if str(tag).strip()]
+    tags = explicit_tag_list({"tags": explicit_tags})
     if tags:
         metadata["tags"] = tags
 

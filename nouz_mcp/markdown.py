@@ -61,6 +61,30 @@ def _has_yaml_value(value: Any) -> bool:
     return True
 
 
+def explicit_tag_list(metadata: Dict[str, Any]) -> list[str]:
+    """Return only explicitly provided YAML tags, cleaned for storage/writes."""
+    raw = metadata.get("tags", [])
+    if raw in (None, "", "None", "none", "NULL", "null"):
+        return []
+
+    values = raw if isinstance(raw, list) else [raw]
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value is None or isinstance(value, (dict, list, tuple, set)):
+            continue
+        tag = str(value).strip()
+        if tag.lower() in {"", "none", "null"}:
+            continue
+        if tag.startswith("#"):
+            tag = tag.lstrip("#").strip()
+        if not tag or tag in seen:
+            continue
+        tags.append(tag)
+        seen.add(tag)
+    return tags
+
+
 def _yaml_str(s: str) -> str:
     if any(c in s for c in ':#{}[]|>&*!,\'\"\\'):
         escaped = s.replace("'", "''")
@@ -81,6 +105,13 @@ def dump_metadata(metadata: Dict[str, Any]) -> str:
         for k, v in metadata.items()
         if k in YAML_ALLOWED_KEYS and k not in KEY_ORDER and _has_yaml_value(v)
     })
+
+    if "tags" in ordered:
+        tags = explicit_tag_list({"tags": ordered["tags"]})
+        if tags:
+            ordered["tags"] = tags
+        else:
+            del ordered["tags"]
 
     # artifact_sign only makes sense in YAML for L4 (composite sign)
     level_val = metadata.get("level", 5)

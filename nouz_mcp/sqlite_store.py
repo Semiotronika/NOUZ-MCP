@@ -8,6 +8,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import aiosqlite
 
+from nouz_mcp.markdown import explicit_tag_list
+
 
 logger = logging.getLogger("nouz")
 ArtifactSignResolver = Callable[[str, Dict[str, Any]], str]
@@ -190,7 +192,7 @@ async def index_file(
                 meta.get("status", "active"),
                 meta.get("content", "")[:2000],
                 datetime.now().isoformat(),
-                json.dumps(meta.get("tags", meta.get("concepts", [])), ensure_ascii=False),
+                json.dumps(explicit_tag_list(meta), ensure_ascii=False),
                 json.dumps(meta.get("core_mix", {}), ensure_ascii=False) if meta.get("core_mix") else None,
             ),
         )
