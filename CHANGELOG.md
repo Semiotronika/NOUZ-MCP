@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.2.1 - released 2026-05-14
+
+### Fixed
+
+- Require concrete chunk evidence before returning vocabulary-based
+  `tag_candidates` from `suggest_metadata`, preventing loose text matches from
+  proposing tags without a supporting chunk/snippet.
+
+### Verification
+
+- Live Obsidian DB rehearsal and live indexing with `index_all with_embeddings=true`.
+- `python -m pytest -q`
+- `python test_server.py`
+
 ## 3.2.0 - released 2026-05-14
 
 ### Added
