@@ -18,7 +18,7 @@ from nouz_mcp._version import __version__  # noqa: E402
 from nouz_mcp import calc_etalons  # noqa: E402
 from nouz_mcp.chunks import chunk_markdown  # noqa: E402
 from nouz_mcp.links import check_parents_exist, get_parents_meta  # noqa: E402
-from nouz_mcp.markdown import canonical_tag, dump_metadata, explicit_tag_list, parse_frontmatter, split_frontmatter_raw, sync_parents_fields  # noqa: E402
+from nouz_mcp.markdown import canonical_tag, dump_metadata, explicit_tag_list, explicit_tag_report, parse_frontmatter, split_frontmatter_raw, sync_parents_fields  # noqa: E402
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level  # noqa: E402
 from nouz_mcp.paths import default_db_path, safe_path  # noqa: E402
 from nouz_mcp.serialization import serialize  # noqa: E402
@@ -212,12 +212,37 @@ def test_explicit_tag_list_ignores_legacy_concepts():
     assert explicit_tag_list({"tags": [" graph ", "", None, "graph", "Graph_Tag"], "concepts": ["legacy"]}) == ["graph", "graph-tag"]
     assert explicit_tag_list({"tags": "manual"}) == ["manual"]
     assert canonical_tag("#Search Tag") == "search-tag"
+    assert canonical_tag(" AI / Agent Context ") == "ai/agent-context"
+    assert canonical_tag("#FF00A1") == ""
+    assert canonical_tag("ff00a1") == ""
+    assert canonical_tag("decade") == "decade"
+    assert canonical_tag("2026") == ""
 
-    dumped = dump_metadata({"type": "quant", "level": 4, "sign": "S", "tags": [" graph ", "#search", "", None]})
+    report = explicit_tag_report({
+        "tags": [
+            " graph ",
+            "Graph!",
+            "AI / Agent Context",
+            "#FF00A1",
+            "https://example.com/topic",
+            "2026",
+        ]
+    })
+    assert report == {
+        "tags": ["graph", "ai/agent-context"],
+        "dropped": [
+            {"value": "#FF00A1", "reason": "hex_color"},
+            {"value": "https://example.com/topic", "reason": "url"},
+            {"value": "2026", "reason": "no_letters"},
+        ],
+    }
+
+    dumped = dump_metadata({"type": "quant", "level": 4, "sign": "S", "tags": [" graph ", "#search", "#FF00A1", "", None]})
     assert "tags:" in dumped
     assert "- graph" in dumped
     assert "- search" in dumped
     assert "#search" not in dumped
+    assert "FF00A1" not in dumped
 
 
 def test_extracted_helpers_match_server_contract(tmp_path):
@@ -1421,6 +1446,7 @@ def test_suggest_metadata_use_case_wires_layers():
         assert result["sign"] == "D"
         assert result["artifact_sign"] == "n"
         assert result["tags"] == ["tag"]
+        assert result["tag_quality"] == {"tags": ["tag"], "dropped": []}
         assert result["semantic_bridges"] == [
             {"entity": "Bridge", "link_type": "semantic", "proposed": True}
         ]

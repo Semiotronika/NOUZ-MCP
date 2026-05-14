@@ -135,6 +135,12 @@ table, and `search_chunks` ranks them by cosine similarity to the query.
 `tag_bridges` in `suggest_metadata` are suggestions from explicit YAML tags and
 are not written back to files.
 
+YAML tags are explicit metadata: NOUZ normalizes them to canonical slug form
+(`agent-context`, optionally `area/topic`) and rejects obvious non-tags such as
+hex colors, URLs, numeric-only tokens, empty values, and `none`/`null`.
+`suggest_metadata` returns `tag_quality` so an agent can see which tags are
+accepted for future `tag_bridges` and which raw values were discarded.
+
 ---
 
 ## Configuration

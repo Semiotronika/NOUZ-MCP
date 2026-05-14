@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
-from nouz_mcp.markdown import explicit_tag_list
+from nouz_mcp.markdown import explicit_tag_list, explicit_tag_report
 
 
 ReadFile = Callable[[Path], Awaitable[Dict[str, Any]]]
@@ -525,7 +525,8 @@ async def suggest_metadata(
     type_ = determine_type(content, meta)
     parents_obj = get_parents_meta(meta)
 
-    tags = explicit_tag_list(meta)
+    tag_report = explicit_tag_report(meta)
+    tags = tag_report["tags"]
 
     semantic_bridges = []
     tag_bridges = []
@@ -582,6 +583,7 @@ async def suggest_metadata(
         "sign_source": sign_source,
         "status": meta.get("status", "draft"),
         "tags": tags,
+        "tag_quality": tag_report,
         "parents": meta.get("parents", []),
         "parents_meta": parents_obj,
         "errors": errors,

@@ -984,7 +984,7 @@ async def run_server():
                                 "artifact_sign": {"type": "string", "description": "Material type sign for artifacts/quants, e.g. note, concept, reference, log, update, hypothesis, specification."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Obsidian wiki links for parents, e.g. ['[[Systems]]']."},
                                 "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "tag", "analogy", "error"]}}}, "description": "Structured parent links used by NOUZ."},
-                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit search or semantic tags. NOUZ does not infer tags."}
+                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit search or semantic tags. They are normalized to canonical slug form; NOUZ does not infer tags."}
                             }
                         },
                         "content_lock": {"type": "boolean", "description": "If true, IGNORE content param and preserve original file text. Default false.", "default": False}
@@ -1051,7 +1051,7 @@ async def run_server():
             types.Tool(
                 name="suggest_metadata",
                 description="Analyze one note and propose knowledge-graph metadata for review. Returns suggested domain sign, "
-                            "material type, hierarchy level, explicit tags, bridge candidates, and hierarchy warnings. Use this before "
+                            "material type, hierarchy level, explicit tags, tag quality, bridge candidates, and hierarchy warnings. Use this before "
                             "write_file when you want classification help, or to audit an existing note. It is read-only and never "
                             "edits YAML. Semantic fields require embeddings and are available in PRIZMA/SLOI modes. The optional "
                             "context object lets an agent test metadata overrides without changing the note.",
@@ -1067,7 +1067,7 @@ async def run_server():
                                 "level": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5]},
                                 "sign": {"type": "string", "description": "Candidate domain sign to evaluate."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Candidate parent wiki links."},
-                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags for what-if analysis. NOUZ does not infer tags."}
+                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags for what-if analysis. They are normalized to canonical slug form; NOUZ does not infer tags."}
                             }
                         }
                     },
@@ -1239,7 +1239,7 @@ async def run_server():
                                 },
                                 "description": "Explicit parent links. Optional; auto-suggested if empty and auto_parents=true."
                             },
-                            "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags to write. NOUZ does not infer tags."},
+                            "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags to write. They are normalized to canonical slug form; NOUZ does not infer tags."},
                             "sign": {"type": "string", "description": "Manual sign override (auto-determined if empty)"},
                             "auto_parents": {"type": "boolean", "description": "If true and no explicit parents, auto-link to top suggested parent (default true)"},
                             "type": {"type": "string", "description": "Entity type (default 'artifact' for L5)", "enum": ["core", "pattern", "module", "quant", "artifact"]}

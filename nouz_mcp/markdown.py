@@ -1,6 +1,7 @@
 """Markdown frontmatter and metadata helpers."""
 
 import re
+import unicodedata
 from typing import Any, Dict
 
 import yaml
@@ -8,7 +9,9 @@ import yaml
 
 YAML_ALLOWED_KEYS = {'type', 'level', 'sign', 'artifact_sign', 'status', 'tags', 'parents', 'parents_meta'}
 KEY_ORDER = ['type', 'level', 'sign', 'artifact_sign', 'status', 'tags', 'parents', 'parents_meta']
-TAG_SEPARATOR_RE = re.compile(r"[\s_]+")
+TAG_HEX_COLOR_RE = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+TAG_URL_RE = re.compile(r"^(?:https?://|www\.)", re.IGNORECASE)
+TAG_MAX_LENGTH = 64
 
 
 def parse_frontmatter(raw: str) -> tuple[Dict[str, Any], str]:
@@ -64,32 +67,99 @@ def _has_yaml_value(value: Any) -> bool:
 
 def canonical_tag(value: Any) -> str:
     """Return the canonical form used for YAML tags and tag bridges."""
-    if value is None or isinstance(value, (dict, list, tuple, set)):
-        return ""
-    tag = str(value).strip().lstrip("#").strip().lower()
-    if tag in {"", "none", "null"}:
-        return ""
-    tag = TAG_SEPARATOR_RE.sub("-", tag)
-    tag = re.sub(r"-{2,}", "-", tag).strip("-")
+    tag, _reason = _canonical_tag_with_reason(value)
     return tag
+
+
+def explicit_tag_report(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Return canonical YAML tags plus discarded raw values with reason codes."""
+    raw = metadata.get("tags", [])
+    if raw in (None, "", "None", "none", "NULL", "null"):
+        return {"tags": [], "dropped": []}
+
+    values = raw if isinstance(raw, list) else [raw]
+    tags: list[str] = []
+    dropped: list[Dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values:
+        tag, reason = _canonical_tag_with_reason(value)
+        if not tag:
+            if reason not in {"empty", "placeholder"}:
+                dropped.append({"value": _tag_preview(value), "reason": reason})
+            continue
+        if tag in seen:
+            continue
+        tags.append(tag)
+        seen.add(tag)
+    return {"tags": tags, "dropped": dropped}
+
+
+def _canonical_tag_with_reason(value: Any) -> tuple[str, str]:
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return "", "invalid_type"
+
+    raw = unicodedata.normalize("NFKC", str(value)).strip()
+    if not raw:
+        return "", "empty"
+
+    stripped = raw.lstrip("#").strip().lower()
+    if stripped in {"", "none", "null"}:
+        return "", "placeholder"
+    if TAG_URL_RE.match(stripped) or "://" in stripped:
+        return "", "url"
+    if (raw.startswith("#") and TAG_HEX_COLOR_RE.fullmatch(raw)) or (
+        len(stripped) in {6, 8}
+        and any(ch.isdigit() for ch in stripped)
+        and TAG_HEX_COLOR_RE.fullmatch(stripped)
+    ):
+        return "", "hex_color"
+
+    tag = _slugify_tag(raw.lstrip("#").strip().lower())
+    if not tag:
+        return "", "no_letters"
+    if len(tag) > TAG_MAX_LENGTH:
+        return "", "too_long"
+    if not any(ch.isalpha() for ch in tag):
+        return "", "no_letters"
+    if sum(1 for ch in tag if ch.isalnum()) < 2:
+        return "", "too_short"
+    return tag, ""
+
+
+def _slugify_tag(value: str) -> str:
+    segments = []
+    for raw_segment in value.replace("\\", "/").split("/"):
+        segment = _slugify_tag_segment(raw_segment)
+        if segment:
+            segments.append(segment)
+    return "/".join(segments)
+
+
+def _slugify_tag_segment(value: str) -> str:
+    chars: list[str] = []
+    last_was_separator = False
+    for ch in value:
+        if ch.isalnum():
+            if last_was_separator and chars:
+                chars.append("-")
+            chars.append(ch)
+            last_was_separator = False
+        else:
+            last_was_separator = True
+    return re.sub(r"-{2,}", "-", "".join(chars)).strip("-")
+
+
+def _tag_preview(value: Any) -> str:
+    if isinstance(value, str):
+        text = value.strip()
+    else:
+        text = type(value).__name__
+    return text[:80]
 
 
 def explicit_tag_list(metadata: Dict[str, Any]) -> list[str]:
     """Return canonical YAML tags that were explicitly provided in metadata."""
-    raw = metadata.get("tags", [])
-    if raw in (None, "", "None", "none", "NULL", "null"):
-        return []
-
-    values = raw if isinstance(raw, list) else [raw]
-    tags: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        tag = canonical_tag(value)
-        if not tag or tag in seen:
-            continue
-        tags.append(tag)
-        seen.add(tag)
-    return tags
+    return explicit_tag_report(metadata)["tags"]
 
 
 def _yaml_str(s: str) -> str:

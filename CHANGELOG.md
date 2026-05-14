@@ -31,7 +31,11 @@
   tags, and `add_entity`/`process_orphans` write tags only when they are passed
   explicitly.
 - Explicit YAML tags are canonicalized for storage and tag-bridge matching:
-  leading `#` is removed, case is folded, and spaces/underscores become `-`.
+  leading `#` is removed, case is folded, spaces/underscores become `-`,
+  optional namespaces like `area/topic` are preserved, and obvious non-tags
+  such as hex colors, URLs, numeric-only tokens, and placeholders are rejected.
+- `suggest_metadata` now includes `tag_quality`, a read-only diagnostic showing
+  which explicit tags were accepted and which raw values were discarded.
 
 ### Verification
 
