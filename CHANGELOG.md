@@ -23,6 +23,8 @@
 - Chunk ids now use vault-relative source identifiers, so preview chunks from
   `chunk_file` and indexed chunks from `index_all` share the same id contract.
 - Chunking now ignores Markdown headings inside fenced code blocks.
+- Graph traversal now uses recursive SQLite queries for descendant/cycle checks,
+  and file-summary lookup is batched to avoid oversized SQLite `IN` clauses.
 - In `NOUZ_READ_ONLY=true`, read-only tools no longer refresh the SQLite cache
   unless `NOUZ_CACHE_WRITE=true` is set; startup DB init/index/calibration is
   skipped under the same guard.

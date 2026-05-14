@@ -42,6 +42,7 @@ from nouz_mcp.sqlite_store import (  # noqa: E402
     get_core_mix as store_get_core_mix,
     get_db_children as store_get_db_children,
     get_db_parents as store_get_db_parents,
+    get_file_summaries as store_get_file_summaries,
     index_file as store_index_file,
     list_chunk_embeddings as store_list_chunk_embeddings,
     list_core_anchor_candidates as store_list_core_anchor_candidates,
@@ -390,10 +391,22 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
         assert await store_list_hierarchy_child_paths(db_path, "A.md") == ["B.md"]
         assert await store_get_db_parents(db_path, "B.md") == [{"entity": "A", "link_type": "hierarchy"}]
         assert await store_check_cycle_exists(db_path, "C.md", "A.md") is True
+        assert await store_check_cycle_exists(db_path, "A.md", "C.md") is False
         assert await store_find_orphaned_links(db_path) == [
             {"child": "C.md", "missing_parent": "Missing.md", "link_type": "semantic"}
         ]
         assert await store_find_entity_path_by_stem(db_path, "B") == "B.md"
+
+        many_paths = [f"many-{idx}.md" for idx in range(1100)]
+        async with aiosqlite.connect(db_path) as db:
+            await db.executemany(
+                "INSERT INTO files (path, type, level, sign) VALUES (?, ?, ?, ?)",
+                [(path, "quant", 4, "S") for path in many_paths],
+            )
+            await db.commit()
+        summaries = await store_get_file_summaries(db_path, many_paths)
+        assert len(summaries) == len(many_paths)
+        assert summaries["many-1099.md"] == ("quant", 4, "S")
 
         await store_save_embedding(db_path, str(note_path), [1.0, 2.0])
         assert await store_load_embedding(db_path, str(note_path)) == [1.0, 2.0]

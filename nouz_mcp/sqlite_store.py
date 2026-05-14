@@ -436,14 +436,18 @@ async def get_file_summaries(db_path: str, path_list: List[str]) -> Dict[str, tu
     if not path_list:
         return {}
 
-    placeholders = ",".join("?" for _ in path_list)
+    result: Dict[str, tuple[str, Optional[int], str]] = {}
     async with aiosqlite.connect(db_path) as db:
-        async with db.execute(
-            f"SELECT path, type, level, sign FROM files WHERE path IN ({placeholders})",
-            path_list,
-        ) as cur:
-            rows = await cur.fetchall()
-    return {row[0]: row[1:] for row in rows}
+        for offset in range(0, len(path_list), 500):
+            batch = path_list[offset : offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            async with db.execute(
+                f"SELECT path, type, level, sign FROM files WHERE path IN ({placeholders})",
+                batch,
+            ) as cur:
+                rows = await cur.fetchall()
+            result.update({row[0]: row[1:] for row in rows})
+    return result
 
 
 async def list_embedding_candidates(db_path: str) -> List[tuple[str, str, Optional[int], str, str]]:
@@ -578,47 +582,42 @@ async def update_sign_recalc_rows(
 
 async def get_db_children(db_path: str, parent_path: str, visited: Optional[set] = None) -> List[str]:
     """Return hierarchy descendants for a parent path."""
-    if visited is None:
-        visited = set()
-    if parent_path in visited:
-        return []
-    visited.add(parent_path)
-
-    children = []
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            'SELECT child_path FROM links WHERE parent_path = ? AND link_type = "hierarchy"',
+            '''WITH RECURSIVE descendants(path) AS (
+                   SELECT child_path FROM links
+                   WHERE parent_path = ? AND link_type = "hierarchy"
+                   UNION
+                   SELECT l.child_path FROM links l
+                   JOIN descendants d ON l.parent_path = d.path
+                   WHERE l.link_type = "hierarchy"
+               )
+               SELECT path FROM descendants WHERE path IS NOT NULL''',
             (parent_path,),
         ) as cur:
             rows = await cur.fetchall()
-    for (child_path,) in rows:
-        children.append(child_path)
-        children.extend(await get_db_children(db_path, child_path, visited))
-    return children
+    return [row[0] for row in rows]
 
 
 async def check_cycle_exists(db_path: str, new_parent: str, new_child: str) -> bool:
     """Return True if adding new_parent -> new_child would create a cycle."""
-    visited = set()
-    stack = [new_parent]
-    while stack:
-        current = stack.pop()
-        if current == new_child:
-            return True
-        if current in visited:
-            continue
-        visited.add(current)
+    if not new_parent or not new_child:
+        return False
 
-        async with aiosqlite.connect(db_path) as db:
-            async with db.execute(
-                'SELECT parent_path FROM links WHERE child_path = ? AND link_type = "hierarchy"',
-                (current,),
-            ) as cur:
-                rows = await cur.fetchall()
-        for (parent_path,) in rows:
-            if parent_path:
-                stack.append(parent_path)
-    return False
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            '''WITH RECURSIVE ancestors(path) AS (
+                   SELECT ?
+                   UNION
+                   SELECT l.parent_path FROM links l
+                   JOIN ancestors a ON l.child_path = a.path
+                   WHERE l.link_type = "hierarchy" AND l.parent_path IS NOT NULL
+               )
+               SELECT 1 FROM ancestors WHERE path = ? LIMIT 1''',
+            (new_parent, new_child),
+        ) as cur:
+            row = await cur.fetchone()
+    return row is not None
 
 
 async def get_db_parents(db_path: str, file_path: str) -> List[Dict[str, str]]:
