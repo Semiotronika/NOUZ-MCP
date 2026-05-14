@@ -39,6 +39,8 @@
 - `suggest_metadata` now also proposes read-only `tag_candidates` from the
   existing YAML tag vocabulary and explicit inline hashtags, plus
   `candidate_tag_bridges` that would become valid if those tags are accepted.
+- Tag candidates include chunk-based `evidence` with chunk id, heading,
+  coordinates, and snippet without requiring stored chunk embeddings.
 
 ### Verification
 

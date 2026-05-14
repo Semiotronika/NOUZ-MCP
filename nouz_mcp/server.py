@@ -727,6 +727,7 @@ async def _suggest_metadata_impl(
         check_cycle_exists=check_cycle_exists,
         determine_core=_determine_core_by_embedding,
         get_core_mix=get_store_core_mix,
+        chunk_markdown=chunk_markdown,
     )
 
 
@@ -1051,7 +1052,7 @@ async def run_server():
             types.Tool(
                 name="suggest_metadata",
                 description="Analyze one note and propose knowledge-graph metadata for review. Returns suggested domain sign, "
-                            "material type, hierarchy level, explicit tags, tag quality, tag candidates, bridge candidates, and hierarchy warnings. Use this before "
+                            "material type, hierarchy level, explicit tags, tag quality, tag candidates with chunk evidence, bridge candidates, and hierarchy warnings. Use this before "
                             "write_file when you want classification help, or to audit an existing note. It is read-only and never "
                             "edits YAML. Semantic fields require embeddings and are available in PRIZMA/SLOI modes. The optional "
                             "context object lets an agent test metadata overrides without changing the note.",

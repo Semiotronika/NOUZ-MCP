@@ -145,7 +145,10 @@ candidates from the already accepted YAML tag vocabulary in the index and
 explicit inline `#tag` markers in the note body. Candidates are not written to
 YAML automatically; once accepted through `update_metadata`, normal
 `tag_bridges` work from those tags. Before writing, possible links are returned
-separately as `candidate_tag_bridges`.
+separately as `candidate_tag_bridges`. For each candidate, NOUZ temporarily
+chunks the current text and returns `evidence` with `chunk_id`, heading,
+coordinates, and a short snippet. This does not require a prebuilt
+`chunk_embeddings` table.
 
 ---
 

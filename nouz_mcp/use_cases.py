@@ -258,6 +258,7 @@ def suggest_tag_candidates(
     tag_rows: List[tuple[str, str, str, str]],
     *,
     own_path: str = "",
+    chunks: List[Dict[str, Any]] | None = None,
     top_n: int = 12,
 ) -> List[Dict[str, Any]]:
     """Suggest read-only tag candidates from inline tags and known YAML tag vocabulary."""
@@ -272,6 +273,7 @@ def suggest_tag_candidates(
             "source": "inline",
             "confidence": 0.9,
             "reason": "explicit inline hashtag in note body",
+            "evidence": _tag_evidence(tag, chunks or [], source="inline"),
         }
 
     vocabulary = _build_tag_vocabulary(tag_rows, own_path=own_path)
@@ -295,11 +297,74 @@ def suggest_tag_candidates(
             "reason": "content matches an existing YAML tag",
             "usage_count": usage_count,
             "example_entity": info["example_entity"],
+            "evidence": _tag_evidence(tag, chunks or [], source="vocabulary"),
         }
 
     result = list(candidates.values())
     result.sort(key=lambda item: (-float(item["confidence"]), item["source"], item["tag"]))
     return result[: max(1, min(int(top_n), 50))]
+
+
+def _tag_evidence(
+    tag: str,
+    chunks: List[Dict[str, Any]],
+    *,
+    source: str,
+    limit: int = 2,
+) -> List[Dict[str, Any]]:
+    evidence: List[Dict[str, Any]] = []
+    pattern = None if source == "inline" else _tag_phrase_re(tag)
+
+    for chunk in chunks:
+        text = str(chunk.get("text", ""))
+        if not text:
+            continue
+        matches = []
+        if source == "inline":
+            matches = [
+                match
+                for match in INLINE_TAG_RE.finditer(text)
+                if canonical_tag(match.group(1)) == tag
+            ]
+        elif pattern:
+            matches = list(pattern.finditer(text))
+        if not matches:
+            continue
+
+        match = matches[0]
+        chunk_start = int(chunk.get("start_char", 0))
+        evidence.append(
+            {
+                "chunk_id": str(chunk.get("id", "")),
+                "heading": str(chunk.get("heading", "")),
+                "start_char": chunk_start + match.start(),
+                "end_char": chunk_start + match.end(),
+                "snippet": _tag_snippet(text, match.start(), match.end()),
+            }
+        )
+        if len(evidence) >= limit:
+            break
+    return evidence
+
+
+def _tag_phrase_re(tag: str) -> re.Pattern[str] | None:
+    parts = [part for part in tag.replace("/", "-").split("-") if part]
+    if not parts:
+        return None
+    separator = r"[\W_]+"
+    pattern = separator.join(re.escape(part) for part in parts)
+    return re.compile(rf"(?<![\w]){pattern}(?![\w])", re.IGNORECASE)
+
+
+def _tag_snippet(text: str, start: int, end: int, *, radius: int = 80) -> str:
+    left = max(0, start - radius)
+    right = min(len(text), end + radius)
+    snippet = text[left:right].strip()
+    if left > 0:
+        snippet = "..." + snippet
+    if right < len(text):
+        snippet = snippet + "..."
+    return re.sub(r"\s+", " ", snippet)
 
 
 def _extract_inline_tags(content: str) -> List[str]:
@@ -624,6 +689,7 @@ async def suggest_metadata(
     check_cycle_exists: CheckCycleExists,
     determine_core: DetermineCore,
     get_core_mix: GetCoreMix,
+    chunk_markdown: ChunkMarkdown | None = None,
 ) -> Dict[str, Any]:
     """Suggest metadata, bridge candidates, and drift signals for one note."""
     meta = context or {}
@@ -646,8 +712,17 @@ async def suggest_metadata(
             tag_rows = await list_tag_bridge_rows(db_path)
         except Exception:
             tag_rows = []
+    chunks = []
+    if content and chunk_markdown:
+        chunks = chunk_markdown(content, source_id=str(file_path), max_chars=1200, overlap_chars=0)
     if content:
-        tag_candidates = suggest_tag_candidates(content, tags, tag_rows, own_path=str(file_path))
+        tag_candidates = suggest_tag_candidates(
+            content,
+            tags,
+            tag_rows,
+            own_path=str(file_path),
+            chunks=chunks,
+        )
     vec = []
     if file_path and reference_vectors:
         if not await embedding_is_fresh(db_path, file_path):
