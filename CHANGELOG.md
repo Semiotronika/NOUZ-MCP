@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.2.0 - release candidate
+## 3.2.0 - released 2026-05-14
 
 ### Added
 
