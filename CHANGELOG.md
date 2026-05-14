@@ -7,15 +7,27 @@
 - Added deterministic Markdown chunking as a low-level retrieval primitive:
   `nouz_mcp.chunks.chunk_markdown`, plus read-only MCP tools `chunk_text` and
   `chunk_file`.
+- Added SQLite `chunk_embeddings` storage, chunk embedding refresh during
+  `index_all with_embeddings=true`, and the read-only `search_chunks` MCP tool.
 - Added `NOUZ_READ_ONLY=true` to hide and block mutating MCP tools.
 - Added manual `analogy` as an accepted `parents_meta.link_type`; NOUZ does not
   auto-generate analogy links.
 - Added `scripts/release_check.py` as a single local verification command for
   compile, pytest, and `test_server.py`.
 
+### Changed
+
+- Clarified chunk span metadata: `start_char`/`end_char` now bound the returned
+  chunk text including overlap, while `body_start_char`/`body_end_char` mark the
+  non-overlap body span.
+- Chunking now ignores Markdown headings inside fenced code blocks.
+- In `NOUZ_READ_ONLY=true`, read-only tools no longer refresh the SQLite cache
+  unless `NOUZ_CACHE_WRITE=true` is set; startup DB init/index/calibration is
+  skipped under the same guard.
+
 ### Verification
 
-- `python -m pytest -q pytest_smoke.py`
+- `python scripts/release_check.py`
 
 ## 3.1.0 - released 2026-05-13
 

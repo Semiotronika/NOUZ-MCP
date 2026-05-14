@@ -53,6 +53,27 @@ async def init_db(
                 updated TIMESTAMP,
                 file_mtime REAL
             );
+            CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                chunk_id TEXT PRIMARY KEY,
+                chunker_version INTEGER,
+                path TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                start_char INTEGER NOT NULL,
+                end_char INTEGER NOT NULL,
+                body_start_char INTEGER,
+                body_end_char INTEGER,
+                heading TEXT,
+                body_hash TEXT,
+                text_hash TEXT,
+                text TEXT,
+                embedding TEXT,
+                updated TIMESTAMP,
+                file_mtime REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_path
+                ON chunk_embeddings(path);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_chunk_embeddings_path_index
+                ON chunk_embeddings(path, chunk_index);
         ''')
 
         if reference_vectors:
@@ -68,6 +89,7 @@ async def init_db(
         await db.commit()
 
     await migrate_artifact_sign(db_path, determine_artifact_sign=determine_artifact_sign)
+    await migrate_chunk_embeddings(db_path)
 
 
 async def migrate_artifact_sign(
@@ -100,6 +122,27 @@ async def migrate_artifact_sign(
                 )
                 await db.commit()
                 logger.info(f"Migration: populated artifact_sign for {len(updates)} L5 files")
+
+
+async def migrate_chunk_embeddings(db_path: str) -> None:
+    """Add retrieval metadata columns to existing chunk embedding tables."""
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute("PRAGMA table_info(chunk_embeddings)") as cur:
+            columns = [row[1] for row in await cur.fetchall()]
+        if not columns:
+            return
+
+        migrations = {
+            "chunker_version": "ALTER TABLE chunk_embeddings ADD COLUMN chunker_version INTEGER",
+            "body_start_char": "ALTER TABLE chunk_embeddings ADD COLUMN body_start_char INTEGER",
+            "body_end_char": "ALTER TABLE chunk_embeddings ADD COLUMN body_end_char INTEGER",
+            "body_hash": "ALTER TABLE chunk_embeddings ADD COLUMN body_hash TEXT",
+            "text_hash": "ALTER TABLE chunk_embeddings ADD COLUMN text_hash TEXT",
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                await db.execute(statement)
+        await db.commit()
 
 
 async def index_file(
@@ -215,7 +258,7 @@ async def aggregate_core_mix(
 
 
 async def delete_missing_index_entries(db_path: str, seen_paths: set[str]) -> None:
-    """Remove file/link index rows for paths not seen in the current vault scan."""
+    """Remove index rows for paths not seen in the current vault scan."""
     if not seen_paths:
         return
 
@@ -229,7 +272,147 @@ async def delete_missing_index_entries(db_path: str, seen_paths: set[str]) -> No
             f"DELETE FROM files WHERE path NOT IN ({placeholders})",
             tuple(seen_paths),
         )
+        await db.execute(
+            f"DELETE FROM embeddings WHERE path NOT IN ({placeholders})",
+            tuple(seen_paths),
+        )
+        await db.execute(
+            f"DELETE FROM chunk_embeddings WHERE path NOT IN ({placeholders})",
+            tuple(seen_paths),
+        )
         await db.commit()
+
+
+async def save_chunk_embeddings(
+    db_path: str,
+    file_path: str,
+    chunks: List[Dict[str, Any]],
+    vectors: List[List[float]],
+) -> None:
+    """Replace stored chunk embeddings for one source file."""
+    if len(chunks) != len(vectors):
+        raise ValueError("chunks and vectors must have the same length")
+
+    try:
+        mtime = Path(file_path).stat().st_mtime
+    except Exception:
+        mtime = None
+
+    rows = []
+    updated = datetime.now().isoformat()
+    for chunk, vec in zip(chunks, vectors):
+        if not vec:
+            continue
+        rows.append(
+            (
+                str(chunk["id"]),
+                int(chunk.get("chunker_version", 1)),
+                file_path,
+                int(chunk["index"]),
+                int(chunk["start_char"]),
+                int(chunk["end_char"]),
+                int(chunk.get("body_start_char", chunk["start_char"])),
+                int(chunk.get("body_end_char", chunk["end_char"])),
+                str(chunk.get("heading", "")),
+                str(chunk.get("body_hash", "")),
+                str(chunk.get("text_hash", "")),
+                str(chunk.get("text", "")),
+                json.dumps(vec),
+                updated,
+                mtime,
+            )
+        )
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM chunk_embeddings WHERE path = ?", (file_path,))
+        if rows:
+            await db.executemany(
+                '''INSERT OR REPLACE INTO chunk_embeddings
+                   (chunk_id, chunker_version, path, chunk_index, start_char, end_char, body_start_char,
+                    body_end_char, heading, body_hash, text_hash, text, embedding, updated, file_mtime)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                rows,
+            )
+        await db.commit()
+
+
+async def chunk_embeddings_are_fresh(
+    db_path: str,
+    file_path: str,
+    *,
+    chunker_version: int = 1,
+    tolerance_seconds: float = 1.0,
+) -> bool:
+    """Return True when stored chunk embeddings match source mtime and chunker version."""
+    try:
+        current_mtime = Path(file_path).stat().st_mtime
+    except Exception:
+        return False
+
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            '''SELECT COUNT(*), MIN(file_mtime), MAX(file_mtime),
+                      MIN(chunker_version), MAX(chunker_version)
+               FROM chunk_embeddings WHERE path = ?''',
+            (file_path,),
+        ) as cur:
+            row = await cur.fetchone()
+
+    if not row or row[0] == 0 or row[1] is None or row[2] is None:
+        return False
+    if row[3] != chunker_version or row[4] != chunker_version:
+        return False
+    return (
+        abs(float(row[1]) - current_mtime) < tolerance_seconds
+        and abs(float(row[2]) - current_mtime) < tolerance_seconds
+    )
+
+
+async def list_chunk_embeddings(
+    db_path: str,
+    path: str = "",
+) -> List[Dict[str, Any]]:
+    """Return stored chunk embeddings, optionally limited to one file path."""
+    async with aiosqlite.connect(db_path) as db:
+        if path:
+            async with db.execute(
+                '''SELECT chunk_id, chunker_version, path, chunk_index, start_char, end_char,
+                          body_start_char, body_end_char, heading, body_hash, text_hash, text, embedding
+                   FROM chunk_embeddings
+                   WHERE path = ? AND embedding IS NOT NULL
+                   ORDER BY chunk_index''',
+                (path,),
+            ) as cur:
+                rows = await cur.fetchall()
+                return [_chunk_embedding_row(row) for row in rows]
+
+        async with db.execute(
+            '''SELECT chunk_id, chunker_version, path, chunk_index, start_char, end_char,
+                      body_start_char, body_end_char, heading, body_hash, text_hash, text, embedding
+               FROM chunk_embeddings
+               WHERE embedding IS NOT NULL
+               ORDER BY path, chunk_index'''
+        ) as cur:
+            rows = await cur.fetchall()
+            return [_chunk_embedding_row(row) for row in rows]
+
+
+def _chunk_embedding_row(row: tuple[Any, ...]) -> Dict[str, Any]:
+    return {
+        "chunk_id": row[0],
+        "chunker_version": row[1],
+        "path": row[2],
+        "index": row[3],
+        "start_char": row[4],
+        "end_char": row[5],
+        "body_start_char": row[6],
+        "body_end_char": row[7],
+        "heading": row[8],
+        "body_hash": row[9],
+        "text_hash": row[10],
+        "text": row[11],
+        "embedding": row[12],
+    }
 
 
 async def list_file_levels_desc(db_path: str) -> List[tuple[str, Optional[int]]]:

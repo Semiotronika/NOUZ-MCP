@@ -104,10 +104,11 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 | `calibrate_cores` | Update core reference vectors |
 | `recalc_signs` | Recalculate signs for all notes |
 | `recalc_core_mix` | Recalculate bottom-up aggregation |
-| `index_all` | Re-index the entire base |
+| `index_all` | Re-index the entire base; with `with_embeddings=true`, also refresh file/chunk embeddings |
 | `embed` | Get a vector for text |
 | `chunk_text` | Split Markdown text into deterministic retrieval chunks |
 | `chunk_file` | Split one note body into deterministic retrieval chunks |
+| `search_chunks` | Search stored chunk embeddings |
 | `list_files` | List with filters by level, sign |
 | `get_children` | Traverse down the graph |
 | `get_parents` | Traverse up the graph |
@@ -118,7 +119,16 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 Set `NOUZ_READ_ONLY=true` to hide and block mutating tools (`write_file`,
 `update_metadata`, `index_all`, recalculation, orphan processing, and entity
 creation). Read-only tools such as `read_file`, `suggest_metadata`, `embed`,
-`chunk_text`, and `chunk_file` remain available.
+`chunk_text`, `chunk_file`, and `search_chunks` remain available. With
+`NOUZ_READ_ONLY=true`, read-only tools do not refresh the SQLite cache by
+default, and startup skips DB init/index/calibration; set `NOUZ_CACHE_WRITE=true`
+if you want cache writes in read-only mode.
+
+`chunk_text` and `chunk_file` return `chunker_version`, stable `id`, actual
+chunk text coordinates (`start_char`/`end_char`), body coordinates without
+overlap (`body_start_char`/`body_end_char`), and hash fields. `index_all` with
+`with_embeddings=true` stores these chunks in the SQLite `chunk_embeddings`
+table, and `search_chunks` ranks them by cosine similarity to the query.
 
 `parents_meta.link_type` supports manual `hierarchy`, `semantic`, `temporary`,
 `tag`, `analogy`, and `error` links. NOUZ does not auto-generate analogy links.

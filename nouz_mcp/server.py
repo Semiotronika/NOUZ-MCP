@@ -28,7 +28,7 @@ from nouz_mcp.config import (
     DEFAULT_CONFIG,
     load_config as load_nouz_config,
 )
-from nouz_mcp.chunks import chunk_markdown
+from nouz_mcp.chunks import CHUNKER_VERSION, chunk_markdown
 from nouz_mcp.links import check_parents_exist, get_parents_meta
 from nouz_mcp.markdown import dump_metadata, parse_frontmatter, split_frontmatter_raw, sync_parents_fields
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level
@@ -44,6 +44,7 @@ from nouz_mcp.signs import (
 from nouz_mcp.sqlite_store import (
     aggregate_core_mix as aggregate_store_core_mix,
     check_cycle_exists,
+    chunk_embeddings_are_fresh as store_chunk_embeddings_are_fresh,
     delete_missing_index_entries,
     embedding_is_fresh as store_embedding_is_fresh,
     find_orphaned_links,
@@ -53,6 +54,7 @@ from nouz_mcp.sqlite_store import (
     get_core_mix as get_store_core_mix,
     get_file_summaries,
     index_file as index_store_file,
+    list_chunk_embeddings as store_list_chunk_embeddings,
     list_core_anchor_candidates,
     init_db as init_sqlite_db,
     list_embedding_candidates,
@@ -64,6 +66,7 @@ from nouz_mcp.sqlite_store import (
     load_reference_vectors as load_store_reference_vectors,
     load_embedding as load_store_embedding,
     save_reference_vector as save_store_reference_vector,
+    save_chunk_embeddings as save_store_chunk_embeddings,
     save_embedding as save_store_embedding,
     update_core_mixes,
     update_sign_recalc_rows,
@@ -75,6 +78,7 @@ from nouz_mcp.use_cases import process_orphans as process_orphans_use_case
 from nouz_mcp.use_cases import read_file as read_file_use_case
 from nouz_mcp.use_cases import recalc_core_mix as recalc_core_mix_use_case
 from nouz_mcp.use_cases import recalc_signs as recalc_signs_use_case
+from nouz_mcp.use_cases import search_chunk_embeddings as search_chunk_embeddings_use_case
 from nouz_mcp.use_cases import suggest_metadata as suggest_metadata_use_case
 from nouz_mcp.use_cases import suggest_parents as suggest_parents_use_case
 from nouz_mcp.use_cases import update_metadata as update_metadata_use_case
@@ -110,6 +114,7 @@ def env_flag(name: str, default: bool = False) -> bool:
 
 
 READ_ONLY = env_flag("NOUZ_READ_ONLY")
+CACHE_WRITE = (not READ_ONLY) or env_flag("NOUZ_CACHE_WRITE")
 
 
 def is_read_only_disabled_tool(name: str) -> bool:
@@ -249,6 +254,11 @@ async def _get_embedding(text: str) -> List[float]:
         cache=embed_cache,
         logger=logger,
     )
+
+
+async def _skip_save_embedding(db_path: str, file_path: str, vec: List[float]) -> None:
+    """No-op embedding cache writer used by read-only tools."""
+    return None
 
 # ============================================================================
 # Files & YAML Processing
@@ -792,7 +802,7 @@ async def _suggest_metadata_impl(
         extract_tags=_extract_tags,
         embedding_is_fresh=store_embedding_is_fresh,
         get_embedding=_get_embedding,
-        save_embedding=save_store_embedding,
+        save_embedding=save_store_embedding if CACHE_WRITE else _skip_save_embedding,
         load_embedding=load_store_embedding,
         determine_sign=_determine_sign_smart,
         get_level_from_meta=_get_level_from_meta,
@@ -921,12 +931,18 @@ async def _process_orphans(
 # ============================================================================
 
 async def _index_all_files(db_path: str, with_embeddings: bool = False) -> Dict[str, Any]:
+    async def chunk_cache_is_fresh(cache_path: str, file_path: str) -> bool:
+        return await store_chunk_embeddings_are_fresh(
+            cache_path,
+            file_path,
+            chunker_version=CHUNKER_VERSION,
+        )
+
     return await index_all_files_use_case(
         db_path,
         Path(OBSIDIAN_ROOT),
         excluded_dirs=EXCLUDED_DIRS,
         with_embeddings=with_embeddings,
-        reference_vectors=RULE["reference_vectors"],
         embed_max_chars=EMBED_MAX_CHARS,
         read_file=read_file_with_metadata,
         index_file=_index_file,
@@ -936,36 +952,78 @@ async def _index_all_files(db_path: str, with_embeddings: bool = False) -> Dict[
         save_embedding=save_store_embedding,
         delete_missing_entries=delete_missing_index_entries,
         find_orphaned_links=find_orphaned_links,
+        chunk_markdown=chunk_markdown,
+        chunk_embeddings_are_fresh=chunk_cache_is_fresh,
+        save_chunk_embeddings=save_store_chunk_embeddings,
         logger=logger,
     )
 
+
+async def _search_chunks(
+    db_path: str,
+    query: str,
+    *,
+    top_k: int = 8,
+    path: str = "",
+) -> Dict[str, Any]:
+    store_path = ""
+    if path:
+        full = safe_path(OBSIDIAN_ROOT, path)
+        if full is None:
+            return {"error": "Path outside OBSIDIAN_ROOT", "matches": []}
+        store_path = str(full)
+
+    result = await search_chunk_embeddings_use_case(
+        query,
+        db_path,
+        top_k=top_k,
+        path=store_path,
+        embed_max_chars=EMBED_MAX_CHARS,
+        get_embedding=_get_embedding,
+        list_chunk_embeddings=store_list_chunk_embeddings,
+        cosine=cosine,
+    )
+
+    root = Path(OBSIDIAN_ROOT)
+    for match in result.get("matches", []):
+        try:
+            match["path"] = str(Path(str(match["path"])).relative_to(root))
+        except ValueError:
+            pass
+    return result
+
 async def run_server():
     db_path = default_db_path(OBSIDIAN_ROOT, DATABASE_NAME, DATABASE_PATH)
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    await init_db(db_path)
 
     logger.info(f"Starting Nouz MCP Server v{VERSION} in '{MODE}' mode...")
     logger.info(f"Mode description: {RULE['description']}")
-    
-    logger.info("Indexing database on startup...")
-    stats = await _index_all_files(db_path, with_embeddings=False)
-    if stats.get("orphans"):
-        logger.warning(f"Orphaned links found: {len(stats['orphans'])} files with missing parents")
-    logger.info(f"Indexed: {stats['indexed']} files, errors: {stats['errors']}")
 
-    if RULE["reference_vectors"]:
-        existing_etalons = await _load_reference_vectors(db_path)
-        if not existing_etalons:
-            logger.info("Core etalons not found - calibrating...")
-            cal_result = await _calibrate_reference_vectors(db_path)
-            calibrated = cal_result.get("calibrated", {})
-            logger.info(f"Calibrated cores: {len(calibrated)}")
+    if CACHE_WRITE:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        await init_db(db_path)
+
+        logger.info("Indexing database on startup...")
+        stats = await _index_all_files(db_path, with_embeddings=False)
+        if stats.get("orphans"):
+            logger.warning(f"Orphaned links found: {len(stats['orphans'])} files with missing parents")
+        logger.info(f"Indexed: {stats['indexed']} files, errors: {stats['errors']}")
+
+        if RULE["reference_vectors"]:
+            existing_etalons = await _load_reference_vectors(db_path)
+            if not existing_etalons:
+                logger.info("Core etalons not found - calibrating...")
+                cal_result = await _calibrate_reference_vectors(db_path)
+                calibrated = cal_result.get("calibrated", {})
+                logger.info(f"Calibrated cores: {len(calibrated)}")
+            else:
+                logger.info(f"Core etalons loaded from DB: {list(existing_etalons.keys())}")
         else:
-            logger.info(f"Core etalons loaded from DB: {list(existing_etalons.keys())}")
-        
-        logger.info("Tip: run 'recalc_signs' and 'recalc_core_mix' tools to compute auto-signatures and core_mix.")
+            logger.info("Tip: embeddings and semantic tools are not available in 'luca' mode.")
     else:
-        logger.info("Tip: embeddings and semantic tools are not available in 'luca' mode.")
+        logger.info("SQLite cache writes are disabled; skipping DB init, startup indexing, and calibration.")
+
+    if RULE["reference_vectors"] and not READ_ONLY:
+        logger.info("Tip: run 'recalc_signs' and 'recalc_core_mix' tools to compute auto-signatures and core_mix.")
 
     server = Server("nouz")
     logger.info(f"Nouz MCP Server v{VERSION} started. OBSIDIAN_ROOT={OBSIDIAN_ROOT}")
@@ -1145,11 +1203,25 @@ async def run_server():
                 }
             ),
             types.Tool(
+                name="search_chunks",
+                description="Search stored chunk embeddings by semantic similarity. Read-only: it does not index or write anything. "
+                            "Run index_all with with_embeddings=true first to populate the SQLite chunk_embedding index.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query to embed and match against chunk embeddings"},
+                        "top_k": {"type": "integer", "description": "Maximum matches to return, 1-50. Default 8."},
+                        "path": {"type": "string", "description": "Optional relative note path to search within one file"},
+                    },
+                    "required": ["query"]
+                }
+            ),
+            types.Tool(
                 name="index_all",
                 description="Scan the whole Markdown vault and rebuild the local SQLite index of files, metadata, and graph links. "
                             "Use this after adding, moving, or reorganizing notes outside NOUZ. It is safe to run repeatedly and "
-                            "reports missing parent links. With with_embeddings=true it also updates vector embeddings for semantic "
-                            "classification, which is slower and requires an embedding provider. This tool indexes data; it is not "
+                            "reports missing parent links. With with_embeddings=true it also updates file and chunk embeddings for "
+                            "retrieval and semantic classification, which is slower and requires an embedding provider. This tool indexes data; it is not "
                             "a search tool.",
                 inputSchema={
                     "type": "object",
@@ -1279,13 +1351,19 @@ async def run_server():
                     return [types.TextContent(type="text", text="Error: Path outside OBSIDIAN_ROOT")]
                 if not full.exists():
                     return [types.TextContent(type="text", text=f"File not found: {rel}")]
-                data = await read_file_use_case(
-                    db_path,
-                    full,
-                    read_file_with_metadata=read_file_with_metadata,
-                    index_file=_index_file,
-                    check_parents_exist=_check_parents_exist,
-                )
+                if CACHE_WRITE:
+                    data = await read_file_use_case(
+                        db_path,
+                        full,
+                        read_file_with_metadata=read_file_with_metadata,
+                        index_file=_index_file,
+                        check_parents_exist=_check_parents_exist,
+                    )
+                else:
+                    data = await read_file_with_metadata(full)
+                    missing = _check_parents_exist(data)
+                    if missing:
+                        data["warnings"] = [f"parent_missing: {parent}" for parent in missing]
                 return [types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False, indent=2))]
 
             elif name == "write_file":
@@ -1413,6 +1491,15 @@ async def run_server():
                     overlap_chars=int(args.get("overlap_chars", 120)),
                 )
                 result = {"path": rel, "chunk_count": len(chunks), "chunks": chunks}
+                return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+            elif name == "search_chunks":
+                result = await _search_chunks(
+                    db_path,
+                    args.get("query", ""),
+                    top_k=int(args.get("top_k", 8)),
+                    path=args.get("path", ""),
+                )
                 return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
             elif name == "index_all":

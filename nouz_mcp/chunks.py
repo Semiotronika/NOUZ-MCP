@@ -9,6 +9,8 @@ from typing import Any
 
 
 HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*$")
+FENCE_RE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+CHUNKER_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -41,23 +43,34 @@ def chunk_markdown(
     base_chunks = _make_base_chunks(normalized, max_chars=max_chars)
 
     chunks: list[dict[str, Any]] = []
+    body_hash_counts: dict[str, int] = {}
     for index, block in enumerate(base_chunks):
         prefix_start = max(0, block.start - overlap_chars) if index else block.start
         overlap = block.start - prefix_start
         chunk_text = normalized[prefix_start:block.end]
+        body_text = normalized[block.start:block.end]
+        body_hash = hashlib.sha1(body_text.encode("utf-8")).hexdigest()[:12]
+        text_hash = hashlib.sha1(chunk_text.encode("utf-8")).hexdigest()[:12]
+        occurrence = body_hash_counts.get(body_hash, 0)
+        body_hash_counts[body_hash] = occurrence + 1
         digest = hashlib.sha1(
-            f"{source_id}\0{index}\0{block.start}\0{block.end}\0{chunk_text}".encode("utf-8")
+            f"{CHUNKER_VERSION}\0{source_id}\0{body_hash}\0{occurrence}".encode("utf-8")
         ).hexdigest()[:12]
         chunks.append(
             {
                 "id": f"chunk:{digest}",
+                "chunker_version": CHUNKER_VERSION,
                 "source_id": source_id,
                 "index": index,
-                "start_char": block.start,
+                "start_char": prefix_start,
                 "end_char": block.end,
+                "body_start_char": block.start,
+                "body_end_char": block.end,
                 "overlap_chars": overlap,
                 "char_count": len(chunk_text),
                 "heading": block.heading,
+                "body_hash": body_hash,
+                "text_hash": text_hash,
                 "text": chunk_text,
             }
         )
@@ -107,6 +120,8 @@ def _markdown_blocks(text: str) -> list[_Block]:
     pos = 0
     active_heading = ""
     block_heading = ""
+    fence_char = ""
+    fence_len = 0
 
     def flush(end: int) -> None:
         nonlocal current, current_start, block_heading
@@ -119,7 +134,10 @@ def _markdown_blocks(text: str) -> list[_Block]:
         block_heading = active_heading
 
     for line in text.splitlines(keepends=True):
-        heading_match = HEADING_RE.match(line.rstrip("\n"))
+        stripped_line = line.rstrip("\n")
+        fence_match = FENCE_RE.match(stripped_line)
+        in_fence = bool(fence_char)
+        heading_match = None if in_fence or fence_match else HEADING_RE.match(stripped_line)
         is_blank = not line.strip()
 
         if heading_match:
@@ -141,6 +159,15 @@ def _markdown_blocks(text: str) -> list[_Block]:
             current.append(line)
 
         pos += len(line)
+        if fence_match:
+            marker = fence_match.group(1)
+            marker_char = marker[0]
+            if not fence_char:
+                fence_char = marker_char
+                fence_len = len(marker)
+            elif marker_char == fence_char and len(marker) >= fence_len:
+                fence_char = ""
+                fence_len = 0
 
     flush(pos)
     return blocks

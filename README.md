@@ -104,10 +104,11 @@ OBSIDIAN_ROOT=./vault python server.py
 | `calibrate_cores` | Обновить векторы-эталоны ядер |
 | `recalc_signs` | Пересчитать знаки всех заметок |
 | `recalc_core_mix` | Пересчитать агрегацию снизу вверх |
-| `index_all` | Переиндексировать всю базу |
+| `index_all` | Переиндексировать всю базу; с `with_embeddings=true` также обновляет file/chunk embeddings |
 | `embed` | Получить вектор для текста |
 | `chunk_text` | Разрезать Markdown-текст на стабильные retrieval-чанки |
 | `chunk_file` | Разрезать тело одной заметки на стабильные retrieval-чанки |
+| `search_chunks` | Искать по сохранённым chunk embeddings |
 | `list_files` | Список с фильтрами по уровню, знаку |
 | `get_children` | Пройти вниз по графу |
 | `get_parents` | Пройти вверх по графу |
@@ -118,7 +119,16 @@ OBSIDIAN_ROOT=./vault python server.py
 Установите `NOUZ_READ_ONLY=true`, чтобы скрыть и заблокировать инструменты,
 которые меняют базу (`write_file`, `update_metadata`, `index_all`, пересчёты,
 обработку сирот и создание сущностей). Read-only инструменты вроде `read_file`,
-`suggest_metadata`, `embed`, `chunk_text` и `chunk_file` останутся доступны.
+`suggest_metadata`, `embed`, `chunk_text`, `chunk_file` и `search_chunks` останутся
+доступны. В режиме `NOUZ_READ_ONLY=true` read-only инструменты по умолчанию не
+обновляют SQLite-кэш, а startup пропускает DB init/index/calibration; если это
+нужно, включите `NOUZ_CACHE_WRITE=true`.
+
+`chunk_text` и `chunk_file` возвращают `chunker_version`, стабильный `id`,
+координаты фактического текста чанка (`start_char`/`end_char`), координаты тела
+без overlap (`body_start_char`/`body_end_char`) и hash-поля. `index_all` с
+`with_embeddings=true` сохраняет эти чанки в SQLite-таблицу `chunk_embeddings`,
+а `search_chunks` ранжирует их по cosine similarity к запросу.
 
 `parents_meta.link_type` поддерживает ручные связи `hierarchy`, `semantic`,
 `temporary`, `tag`, `analogy` и `error`. NOUZ не генерирует аналогии

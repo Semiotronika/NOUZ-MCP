@@ -35,6 +35,7 @@ from nouz_mcp.signs import (  # noqa: E402
 from nouz_mcp.sqlite_store import (  # noqa: E402
     aggregate_core_mix as store_aggregate_core_mix,
     check_cycle_exists as store_check_cycle_exists,
+    chunk_embeddings_are_fresh as store_chunk_embeddings_are_fresh,
     embedding_is_fresh as store_embedding_is_fresh,
     find_entity_path_by_stem as store_find_entity_path_by_stem,
     find_orphaned_links as store_find_orphaned_links,
@@ -42,6 +43,7 @@ from nouz_mcp.sqlite_store import (  # noqa: E402
     get_db_children as store_get_db_children,
     get_db_parents as store_get_db_parents,
     index_file as store_index_file,
+    list_chunk_embeddings as store_list_chunk_embeddings,
     list_core_anchor_candidates as store_list_core_anchor_candidates,
     init_db as init_sqlite_store,
     list_embedding_candidates as store_list_embedding_candidates,
@@ -52,6 +54,7 @@ from nouz_mcp.sqlite_store import (  # noqa: E402
     list_tag_bridge_rows as store_list_tag_bridge_rows,
     load_reference_vectors as store_load_reference_vectors,
     load_embedding as store_load_embedding,
+    save_chunk_embeddings as store_save_chunk_embeddings,
     save_embedding as store_save_embedding,
     save_reference_vector as store_save_reference_vector,
     update_sign_recalc_rows as store_update_sign_recalc_rows,
@@ -63,6 +66,7 @@ from nouz_mcp.use_cases import process_orphans as process_orphans_use_case  # no
 from nouz_mcp.use_cases import read_file as read_file_use_case  # noqa: E402
 from nouz_mcp.use_cases import recalc_core_mix as recalc_core_mix_use_case  # noqa: E402
 from nouz_mcp.use_cases import recalc_signs as recalc_signs_use_case  # noqa: E402
+from nouz_mcp.use_cases import search_chunk_embeddings as search_chunk_embeddings_use_case  # noqa: E402
 from nouz_mcp.use_cases import suggest_metadata as suggest_metadata_use_case  # noqa: E402
 from nouz_mcp.use_cases import suggest_parents as suggest_parents_use_case  # noqa: E402
 from nouz_mcp.use_cases import update_metadata as update_metadata_use_case  # noqa: E402
@@ -89,15 +93,42 @@ def test_read_only_tool_filter_hides_mutating_tools():
         server.types.Tool(name="suggest_metadata", description="", inputSchema={"type": "object"}),
         server.types.Tool(name="recalc_signs", description="", inputSchema={"type": "object"}),
         server.types.Tool(name="chunk_file", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="search_chunks", description="", inputSchema={"type": "object"}),
     ]
 
     visible = server.filter_read_only_tools(tools, read_only=True)
     visible_names = {tool.name for tool in visible}
 
-    assert visible_names == {"read_file", "suggest_metadata", "chunk_file"}
+    assert visible_names == {"read_file", "suggest_metadata", "chunk_file", "search_chunks"}
     assert server.filter_read_only_tools(tools, read_only=False) == tools
     assert server.is_read_only_disabled_tool("write_file") is True
     assert server.is_read_only_disabled_tool("chunk_file") is False
+    assert server.is_read_only_disabled_tool("search_chunks") is False
+
+
+def test_read_only_env_disables_cache_writes_by_default():
+    script = (
+        "import os, tempfile; "
+        "os.environ['OBSIDIAN_ROOT'] = tempfile.mkdtemp(); "
+        "os.environ['EMBED_ENABLED'] = 'false'; "
+        "os.environ['NOUZ_READ_ONLY'] = 'true'; "
+        "import nouz_mcp.server as server; "
+        "assert server.READ_ONLY is True; "
+        "assert server.CACHE_WRITE is False"
+    )
+    subprocess.run([sys.executable, "-c", script], check=True)
+
+    script_with_cache = (
+        "import os, tempfile; "
+        "os.environ['OBSIDIAN_ROOT'] = tempfile.mkdtemp(); "
+        "os.environ['EMBED_ENABLED'] = 'false'; "
+        "os.environ['NOUZ_READ_ONLY'] = 'true'; "
+        "os.environ['NOUZ_CACHE_WRITE'] = 'true'; "
+        "import nouz_mcp.server as server; "
+        "assert server.READ_ONLY is True; "
+        "assert server.CACHE_WRITE is True"
+    )
+    subprocess.run([sys.executable, "-c", script_with_cache], check=True)
 
 
 def test_public_metadata_versions_match_package_version():
@@ -227,10 +258,16 @@ def test_chunk_markdown_is_stable_and_heading_aware():
     assert [chunk["index"] for chunk in chunks] == list(range(len(chunks)))
     assert chunks[0]["source_id"] == "note.md"
     assert chunks[0]["id"].startswith("chunk:")
+    assert chunks[0]["chunker_version"] == 1
     assert chunks[0]["heading"] == "Root"
     assert chunks[-1]["heading"] == "Details"
     assert all(chunk["start_char"] < chunk["end_char"] for chunk in chunks)
     assert all(chunk["char_count"] <= 45 + 8 for chunk in chunks)
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    assert all(chunk["text"] == normalized[chunk["start_char"]:chunk["end_char"]] for chunk in chunks)
+    assert all(chunk["body_start_char"] >= chunk["start_char"] for chunk in chunks)
+    assert all(chunk["body_end_char"] == chunk["end_char"] for chunk in chunks)
+    assert all(chunk["body_hash"] for chunk in chunks)
 
 
 def test_chunk_markdown_handles_empty_text_and_large_blocks():
@@ -242,8 +279,19 @@ def test_chunk_markdown_handles_empty_text_and_large_blocks():
     assert len(chunks) == 3
     assert chunks[0]["start_char"] == 0
     assert chunks[1]["overlap_chars"] == 10
+    assert chunks[1]["start_char"] == chunks[1]["body_start_char"] - 10
     assert chunks[1]["text"].startswith("A" * 10)
     assert chunks[-1]["end_char"] == 130
+
+
+def test_chunk_markdown_ignores_headings_inside_fenced_code():
+    text = "# Root\n\n```python\n# not a heading\n```\n\n## Real Heading\nBody\n"
+    chunks = chunk_markdown(text, source_id="code.md", max_chars=80, overlap_chars=0)
+
+    assert len(chunks) == 2
+    assert chunks[0]["heading"] == "Root"
+    assert "# not a heading" in chunks[0]["text"]
+    assert chunks[1]["heading"] == "Real Heading"
 
 
 def test_mode_helpers_are_directly_usable():
@@ -305,7 +353,7 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
         async with aiosqlite.connect(db_path) as db:
             async with db.execute("SELECT name FROM sqlite_master WHERE type='table'") as cur:
                 tables = {row[0] for row in await cur.fetchall()}
-            assert {"files", "links", "embeddings", "reference_vectors"}.issubset(tables)
+            assert {"files", "links", "embeddings", "chunk_embeddings", "reference_vectors"}.issubset(tables)
 
             note_path = tmp_path / "note.md"
             note_path.write_text("body", encoding="utf-8")
@@ -339,6 +387,17 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
         await store_save_embedding(db_path, str(note_path), [1.0, 2.0])
         assert await store_load_embedding(db_path, str(note_path)) == [1.0, 2.0]
         assert await store_embedding_is_fresh(db_path, str(note_path)) is True
+        chunks = chunk_markdown("Alpha\n\nBeta", source_id=str(note_path), max_chars=8, overlap_chars=2)
+        await store_save_chunk_embeddings(db_path, str(note_path), chunks, [[1.0, 0.0], [0.0, 1.0]])
+        stored_chunks = await store_list_chunk_embeddings(db_path)
+        assert len(stored_chunks) == 2
+        assert stored_chunks[0]["path"] == str(note_path)
+        assert stored_chunks[0]["chunker_version"] == 1
+        assert stored_chunks[0]["body_hash"]
+        assert json.loads(stored_chunks[0]["embedding"]) == [1.0, 0.0]
+        assert await store_chunk_embeddings_are_fresh(db_path, str(note_path)) is True
+        await store_save_chunk_embeddings(db_path, str(note_path), chunks[:1], [[0.5, 0.5]])
+        assert len(await store_list_chunk_embeddings(db_path, str(note_path))) == 1
         await store_save_reference_vector(db_path, "S", "systems", [0.1, 0.2])
         assert await store_load_reference_vectors(db_path) == {"S": [0.1, 0.2]}
 
@@ -600,7 +659,7 @@ def test_index_all_use_case_wires_layers(tmp_path):
         hidden.mkdir()
         (hidden / "skip.md").write_text("hidden", encoding="utf-8")
 
-        calls = {"indexed": [], "saved": [], "deleted": None}
+        calls = {"indexed": [], "saved": [], "chunks": [], "deleted": None}
 
         async def read_file(path: Path):
             return {"content": path.read_text(encoding="utf-8")}
@@ -617,6 +676,12 @@ def test_index_all_use_case_wires_layers(tmp_path):
         async def save_embedding(db_path: str, path: str, vec: list[float]):
             calls["saved"].append((Path(path).name, vec))
 
+        async def chunk_embeddings_are_fresh(db_path: str, path: str):
+            return False
+
+        async def save_chunk_embeddings(db_path: str, path: str, chunks: list[dict], vectors: list[list[float]]):
+            calls["chunks"].append((Path(path).name, len(chunks), vectors))
+
         async def delete_missing_entries(db_path: str, seen_paths: set[str]):
             calls["deleted"] = {Path(path).name for path in seen_paths}
 
@@ -628,7 +693,6 @@ def test_index_all_use_case_wires_layers(tmp_path):
             root,
             excluded_dirs={".obsidian"},
             with_embeddings=True,
-            reference_vectors=True,
             embed_max_chars=10,
             read_file=read_file,
             index_file=index_file,
@@ -638,14 +702,20 @@ def test_index_all_use_case_wires_layers(tmp_path):
             save_embedding=save_embedding,
             delete_missing_entries=delete_missing_entries,
             find_orphaned_links=find_orphaned_links,
+            chunk_markdown=chunk_markdown,
+            chunk_embeddings_are_fresh=chunk_embeddings_are_fresh,
+            save_chunk_embeddings=save_chunk_embeddings,
         )
 
         assert calls["indexed"] == ["keep.md"]
         assert calls["saved"] == [("keep.md", [1.0, 2.0])]
+        assert calls["chunks"] == [("keep.md", 1, [[1.0, 2.0]])]
         assert calls["deleted"] == {"keep.md"}
         assert result == {
             "indexed": 1,
             "embedded": 1,
+            "chunk_files": 1,
+            "chunk_embedded": 1,
             "errors": 0,
             "orphans": [{"child": "x", "missing_parent": "y", "link_type": "hierarchy"}],
         }
@@ -1131,6 +1201,79 @@ def test_suggest_parents_use_case_reports_unavailable_embeddings(tmp_path):
         assert result["error"] == "Embeddings unavailable."
         assert result["dominant_core"] == "S"
         assert result["candidates"] == []
+
+    asyncio.run(scenario())
+
+
+def test_search_chunk_embeddings_use_case_ranks_stored_chunks():
+    async def scenario():
+        async def get_embedding(text: str):
+            assert text == "needle"
+            return [1.0, 0.0]
+
+        async def list_chunk_embeddings(db_path: str, path: str):
+            assert db_path == "db.sqlite"
+            assert path == "note.md"
+            return [
+                {
+                    "chunk_id": "chunk:far",
+                    "chunker_version": 1,
+                    "path": "note.md",
+                    "index": 0,
+                    "start_char": 0,
+                    "end_char": 4,
+                    "body_start_char": 0,
+                    "body_end_char": 4,
+                    "heading": "A",
+                    "body_hash": "body-a",
+                    "text_hash": "text-a",
+                    "text": "far",
+                    "embedding": json.dumps([0.0, 1.0]),
+                },
+                {
+                    "chunk_id": "chunk:near",
+                    "chunker_version": 1,
+                    "path": "note.md",
+                    "index": 1,
+                    "start_char": 5,
+                    "end_char": 10,
+                    "body_start_char": 5,
+                    "body_end_char": 10,
+                    "heading": "B",
+                    "body_hash": "body-b",
+                    "text_hash": "text-b",
+                    "text": "near",
+                    "embedding": json.dumps([1.0, 0.0]),
+                },
+                {"chunk_id": "broken", "embedding": "not-json"},
+            ]
+
+        result = await search_chunk_embeddings_use_case(
+            " needle ",
+            "db.sqlite",
+            top_k=1,
+            path="note.md",
+            embed_max_chars=20,
+            get_embedding=get_embedding,
+            list_chunk_embeddings=list_chunk_embeddings,
+            cosine=cosine,
+        )
+
+        assert result["query"] == "needle"
+        assert result["top_k"] == 1
+        assert [match["chunk_id"] for match in result["matches"]] == ["chunk:near"]
+        assert result["matches"][0]["score"] == 1.0
+        assert result["matches"][0]["body_hash"] == "body-b"
+
+        empty = await search_chunk_embeddings_use_case(
+            "  ",
+            "db.sqlite",
+            embed_max_chars=20,
+            get_embedding=get_embedding,
+            list_chunk_embeddings=list_chunk_embeddings,
+            cosine=cosine,
+        )
+        assert empty == {"error": "Empty query.", "matches": []}
 
     asyncio.run(scenario())
 

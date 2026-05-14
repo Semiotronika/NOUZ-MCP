@@ -322,7 +322,7 @@ async def test_db_init():
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute("SELECT name FROM sqlite_master WHERE type='table'") as cur:
                 tables = {row[0] for row in await cur.fetchall()}
-        expected = {"files", "links", "embeddings"}
+        expected = {"files", "links", "embeddings", "chunk_embeddings"}
         assert expected.issubset(tables), f"Missing tables: {expected - tables}"
         ok(f"DB tables created: {sorted(tables)}")
     except Exception as e:

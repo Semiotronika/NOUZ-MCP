@@ -14,6 +14,10 @@ GetEmbedding = Callable[[str], Awaitable[List[float]]]
 SaveEmbedding = Callable[[str, str, List[float]], Awaitable[None]]
 LoadEmbedding = Callable[[str, str], Awaitable[List[float]]]
 DeleteMissingEntries = Callable[[str, Set[str]], Awaitable[None]]
+ChunkMarkdown = Callable[..., List[Dict[str, Any]]]
+ChunkEmbeddingsAreFresh = Callable[[str, str], Awaitable[bool]]
+SaveChunkEmbeddings = Callable[[str, str, List[Dict[str, Any]], List[List[float]]], Awaitable[None]]
+ListChunkEmbeddings = Callable[[str, str], Awaitable[List[Dict[str, Any]]]]
 FindOrphanedLinks = Callable[[str], Awaitable[List[Dict[str, str]]]]
 GetFileSummaries = Callable[[str, List[str]], Awaitable[Dict[str, tuple[str, Optional[int], str]]]]
 ListEmbeddingCandidates = Callable[[str], Awaitable[List[tuple[str, str, Optional[int], str, str]]]]
@@ -56,7 +60,6 @@ async def index_all_files(
     *,
     excluded_dirs: set[str],
     with_embeddings: bool,
-    reference_vectors: bool,
     embed_max_chars: int,
     read_file: ReadFile,
     index_file: IndexFile,
@@ -66,11 +69,18 @@ async def index_all_files(
     save_embedding: SaveEmbedding,
     delete_missing_entries: DeleteMissingEntries,
     find_orphaned_links: FindOrphanedLinks,
+    chunk_markdown: ChunkMarkdown | None = None,
+    chunk_embeddings_are_fresh: ChunkEmbeddingsAreFresh | None = None,
+    save_chunk_embeddings: SaveChunkEmbeddings | None = None,
+    chunk_max_chars: int = 1200,
+    chunk_overlap_chars: int = 120,
     logger: logging.Logger | None = None,
 ) -> Dict[str, Any]:
     """Scan the vault, refresh the SQLite index, and optionally refresh embeddings."""
     total = 0
     embedded = 0
+    chunk_files = 0
+    chunk_embedded = 0
     errors = 0
     seen_paths: Set[str] = set()
 
@@ -86,15 +96,37 @@ async def index_all_files(
 
             if is_meta_root(path):
                 continue
-            if with_embeddings and data.get("content") and reference_vectors:
-                if not await embedding_is_fresh(db_path, str(path)):
-                    embedding_text = data["content"]
-                    vec = await get_embedding(embedding_text[:embed_max_chars])
-                    if vec:
-                        await save_embedding(db_path, str(path), vec)
+            if with_embeddings:
+                content = str(data.get("content") or "")
+                if content:
+                    if not await embedding_is_fresh(db_path, str(path)):
+                        vec = await get_embedding(content[:embed_max_chars])
+                        if vec:
+                            await save_embedding(db_path, str(path), vec)
+                            embedded += 1
+                    else:
                         embedded += 1
-                else:
-                    embedded += 1
+                if chunk_markdown and chunk_embeddings_are_fresh and save_chunk_embeddings:
+                    if not content:
+                        await save_chunk_embeddings(db_path, str(path), [], [])
+                    elif not await chunk_embeddings_are_fresh(db_path, str(path)):
+                        chunks = chunk_markdown(
+                            content,
+                            source_id=str(path),
+                            max_chars=chunk_max_chars,
+                            overlap_chars=chunk_overlap_chars,
+                        )
+                        chunk_vectors = []
+                        embedded_chunks = []
+                        for chunk in chunks:
+                            vec = await get_embedding(str(chunk.get("text", ""))[:embed_max_chars])
+                            if vec:
+                                embedded_chunks.append(chunk)
+                                chunk_vectors.append(vec)
+                        await save_chunk_embeddings(db_path, str(path), embedded_chunks, chunk_vectors)
+                        if embedded_chunks:
+                            chunk_files += 1
+                            chunk_embedded += len(embedded_chunks)
         except Exception as exc:
             if logger:
                 logger.warning(f"Indexing error {path}: {exc}")
@@ -103,7 +135,64 @@ async def index_all_files(
     await delete_missing_entries(db_path, seen_paths)
 
     orphans = await find_orphaned_links(db_path)
-    return {"indexed": total, "embedded": embedded, "errors": errors, "orphans": orphans}
+    return {
+        "indexed": total,
+        "embedded": embedded,
+        "chunk_files": chunk_files,
+        "chunk_embedded": chunk_embedded,
+        "errors": errors,
+        "orphans": orphans,
+    }
+
+
+async def search_chunk_embeddings(
+    query: str,
+    db_path: str,
+    *,
+    top_k: int = 8,
+    path: str = "",
+    embed_max_chars: int,
+    get_embedding: GetEmbedding,
+    list_chunk_embeddings: ListChunkEmbeddings,
+    cosine: Cosine,
+) -> Dict[str, Any]:
+    """Rank stored chunk embeddings by semantic similarity to a query."""
+    normalized_query = query.strip()
+    limit = max(1, min(int(top_k), 50))
+    if not normalized_query:
+        return {"error": "Empty query.", "matches": []}
+
+    query_vec = await get_embedding(normalized_query[:embed_max_chars])
+    if not query_vec:
+        return {"error": "Embeddings unavailable.", "matches": []}
+
+    matches = []
+    for chunk in await list_chunk_embeddings(db_path, path):
+        try:
+            chunk_vec = json.loads(str(chunk.get("embedding") or ""))
+        except Exception:
+            continue
+        score = cosine(query_vec, chunk_vec)
+        matches.append(
+            {
+                "chunk_id": chunk.get("chunk_id", ""),
+                "chunker_version": chunk.get("chunker_version"),
+                "path": chunk.get("path", ""),
+                "index": chunk.get("index"),
+                "start_char": chunk.get("start_char"),
+                "end_char": chunk.get("end_char"),
+                "body_start_char": chunk.get("body_start_char"),
+                "body_end_char": chunk.get("body_end_char"),
+                "heading": chunk.get("heading", ""),
+                "body_hash": chunk.get("body_hash", ""),
+                "text_hash": chunk.get("text_hash", ""),
+                "score": round(score, 4),
+                "text": chunk.get("text", ""),
+            }
+        )
+
+    matches.sort(key=lambda item: -item["score"])
+    return {"query": normalized_query, "top_k": limit, "matches": matches[:limit]}
 
 
 async def list_files(
