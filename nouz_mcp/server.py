@@ -28,6 +28,7 @@ from nouz_mcp.config import (
     DEFAULT_CONFIG,
     load_config as load_nouz_config,
 )
+from nouz_mcp.chunks import chunk_markdown
 from nouz_mcp.links import check_parents_exist, get_parents_meta
 from nouz_mcp.markdown import dump_metadata, parse_frontmatter, split_frontmatter_raw, sync_parents_fields
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level
@@ -1065,6 +1066,35 @@ async def run_server():
                 }
             ),
             types.Tool(
+                name="chunk_text",
+                description="Split Markdown text into deterministic, embedding-ready chunks. This is a read-only low-level "
+                            "retrieval primitive: it does not index, embed, or write anything.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Markdown text to split"},
+                        "source_id": {"type": "string", "description": "Optional source identifier used in stable chunk ids"},
+                        "max_chars": {"type": "integer", "description": "Target maximum chunk body size before overlap. Default 1200."},
+                        "overlap_chars": {"type": "integer", "description": "Prefix overlap for chunks after the first. Default 120."},
+                    },
+                    "required": ["text"]
+                }
+            ),
+            types.Tool(
+                name="chunk_file",
+                description="Read one Markdown note and return deterministic, embedding-ready chunks of its body. Read-only: "
+                            "does not index, embed, or write anything. Use before designing chunk embeddings or context packs.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Relative path from OBSIDIAN_ROOT"},
+                        "max_chars": {"type": "integer", "description": "Target maximum chunk body size before overlap. Default 1200."},
+                        "overlap_chars": {"type": "integer", "description": "Prefix overlap for chunks after the first. Default 120."},
+                    },
+                    "required": ["path"]
+                }
+            ),
+            types.Tool(
                 name="index_all",
                 description="Scan the whole Markdown vault and rebuild the local SQLite index of files, metadata, and graph links. "
                             "Use this after adding, moving, or reorganizing notes outside NOUZ. It is safe to run repeatedly and "
@@ -1301,6 +1331,36 @@ async def run_server():
                 if not vec:
                     return [types.TextContent(type="text", text=json.dumps({"error": "Embeddings unavailable"}, ensure_ascii=False))]
                 return [types.TextContent(type="text", text=json.dumps({"embedding": vec, "dim": len(vec)}, ensure_ascii=False))]
+
+            elif name == "chunk_text":
+                text = args.get("text", "")
+                source_id = args.get("source_id", "")
+                chunks = chunk_markdown(
+                    text,
+                    source_id=source_id,
+                    max_chars=int(args.get("max_chars", 1200)),
+                    overlap_chars=int(args.get("overlap_chars", 120)),
+                )
+                result = {"source_id": source_id, "chunk_count": len(chunks), "chunks": chunks}
+                return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+            elif name == "chunk_file":
+                rel = args.get("path", "")
+                full = safe_path(OBSIDIAN_ROOT, rel)
+                if full is None:
+                    return [types.TextContent(type="text", text="Error: Path outside OBSIDIAN_ROOT")]
+                if not full.exists():
+                    return [types.TextContent(type="text", text=f"File not found: {rel}")]
+                data = await read_file_with_metadata(full)
+                content = data.get("content", "")
+                chunks = chunk_markdown(
+                    content,
+                    source_id=rel,
+                    max_chars=int(args.get("max_chars", 1200)),
+                    overlap_chars=int(args.get("overlap_chars", 120)),
+                )
+                result = {"path": rel, "chunk_count": len(chunks), "chunks": chunks}
+                return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
             elif name == "index_all":
                 with_embeddings = args.get("with_embeddings", False)

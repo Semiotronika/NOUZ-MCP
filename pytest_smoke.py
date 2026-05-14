@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nouz_mcp import server  # noqa: E402
 from nouz_mcp._version import __version__  # noqa: E402
 from nouz_mcp import calc_etalons  # noqa: E402
+from nouz_mcp.chunks import chunk_markdown  # noqa: E402
 from nouz_mcp.links import check_parents_exist, get_parents_meta  # noqa: E402
 from nouz_mcp.markdown import dump_metadata, parse_frontmatter, split_frontmatter_raw, sync_parents_fields  # noqa: E402
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level  # noqa: E402
@@ -119,6 +121,20 @@ def test_public_metadata_json_files_parse():
     json.loads(Path("glama.json").read_text(encoding="utf-8"))
 
 
+def test_release_check_lists_verification_contract():
+    result = subprocess.run(
+        [sys.executable, "scripts/release_check.py", "--list"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    commands = json.loads(result.stdout)
+
+    assert ["python", "-m", "pytest", "-q"] in commands
+    assert ["python", "test_server.py"] in commands
+    assert all("twine" not in command for command in commands)
+
+
 def test_frontmatter_parser_reads_yaml_and_body():
     raw = "---\ntype: quant\nlevel: 4\nsign: T\n---\nBody text"
     attrs, body = parse_frontmatter(raw)
@@ -180,6 +196,35 @@ def test_markdown_helpers_are_directly_usable():
     dumped = dump_metadata({"type": "quant", "level": 4, "sign": "S", "content": "hidden"})
     assert "type: quant" in dumped
     assert "content:" not in dumped
+
+
+def test_chunk_markdown_is_stable_and_heading_aware():
+    text = "# Root\n\nAlpha paragraph.\n\n## Details\n\nBeta paragraph with enough words for a second block.\n"
+
+    chunks = chunk_markdown(text, source_id="note.md", max_chars=45, overlap_chars=8)
+    chunks_again = chunk_markdown(text, source_id="note.md", max_chars=45, overlap_chars=8)
+
+    assert chunks == chunks_again
+    assert [chunk["index"] for chunk in chunks] == list(range(len(chunks)))
+    assert chunks[0]["source_id"] == "note.md"
+    assert chunks[0]["id"].startswith("chunk:")
+    assert chunks[0]["heading"] == "Root"
+    assert chunks[-1]["heading"] == "Details"
+    assert all(chunk["start_char"] < chunk["end_char"] for chunk in chunks)
+    assert all(chunk["char_count"] <= 45 + 8 for chunk in chunks)
+
+
+def test_chunk_markdown_handles_empty_text_and_large_blocks():
+    assert chunk_markdown("   \n\n", source_id="empty.md") == []
+
+    text = "A" * 130
+    chunks = chunk_markdown(text, source_id="large.md", max_chars=50, overlap_chars=10)
+
+    assert len(chunks) == 3
+    assert chunks[0]["start_char"] == 0
+    assert chunks[1]["overlap_chars"] == 10
+    assert chunks[1]["text"].startswith("A" * 10)
+    assert chunks[-1]["end_char"] == 130
 
 
 def test_mode_helpers_are_directly_usable():

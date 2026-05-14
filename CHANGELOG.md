@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added deterministic Markdown chunking as a low-level retrieval primitive:
+  `nouz_mcp.chunks.chunk_markdown`, plus read-only MCP tools `chunk_text` and
+  `chunk_file`.
+- Added `scripts/release_check.py` as a single local verification command for
+  compile, pytest, and `test_server.py`.
+
+### Verification
+
+- `python -m pytest -q pytest_smoke.py`
+
 ## 3.1.0 - released 2026-05-13
 
 This release is a structural refactor and public documentation pass.

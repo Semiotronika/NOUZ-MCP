@@ -106,6 +106,8 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 | `recalc_core_mix` | Recalculate bottom-up aggregation |
 | `index_all` | Re-index the entire base |
 | `embed` | Get a vector for text |
+| `chunk_text` | Split Markdown text into deterministic retrieval chunks |
+| `chunk_file` | Split one note body into deterministic retrieval chunks |
 | `list_files` | List with filters by level, sign |
 | `get_children` | Traverse down the graph |
 | `get_parents` | Traverse up the graph |
@@ -237,7 +239,7 @@ Everything critical stays on your machine.
 git clone https://github.com/Semiotronika/NOUZ-MCP
 cd NOUZ-MCP
 pip install -e .
-python test_server.py
+python scripts/release_check.py
 ```
 
 ---

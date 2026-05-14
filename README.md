@@ -106,6 +106,8 @@ OBSIDIAN_ROOT=./vault python server.py
 | `recalc_core_mix` | Пересчитать агрегацию снизу вверх |
 | `index_all` | Переиндексировать всю базу |
 | `embed` | Получить вектор для текста |
+| `chunk_text` | Разрезать Markdown-текст на стабильные retrieval-чанки |
+| `chunk_file` | Разрезать тело одной заметки на стабильные retrieval-чанки |
 | `list_files` | Список с фильтрами по уровню, знаку |
 | `get_children` | Пройти вниз по графу |
 | `get_parents` | Пройти вверх по графу |
@@ -237,7 +239,7 @@ S↔D: -0.5059   S↔E: -0.5117   D↔E: -0.4822
 git clone https://github.com/Semiotronika/NOUZ-MCP
 cd NOUZ-MCP
 pip install -e .
-python test_server.py
+python scripts/release_check.py
 ```
 
 ---
