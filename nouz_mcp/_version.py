@@ -5,4 +5,4 @@ Update this file when releasing a new version. All other version references
 here either directly or by mirroring this value.
 """
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"

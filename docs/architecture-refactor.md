@@ -109,8 +109,9 @@ semantic-service surface: `_find_semantic_bridges`,
 module-level globals (`RULE`, `CORE_SIGNS`, `CONFIG`, thresholds, `_get_embedding`).
 Extracting them cleanly requires introducing a `SemanticService` with explicit
 config and embedder injection, which is a meaningful design change rather than
-a code move. That work belongs in a separate release (target: 3.2.0) so 3.1.0
-stays a pure refactor with stable behavior.
+a code move. That work belongs in a later release; 3.1.0 stayed a pure refactor
+with stable behavior, and 3.2.0 focuses on retrieval chunks and clean explicit
+tag support.
 
 ## Current Layer Model
 
@@ -131,7 +132,8 @@ Graph Store
   SQLite tables, migrations, file index, parent/child links, embeddings cache.
 
 Semantics
-  embeddings, etalons, cosine/mean-centering, semantic bridges, core_mix.
+  embeddings, etalons, cosine/mean-centering, semantic bridges, explicit-tag
+  bridge suggestions, core_mix.
 
 Config / Policy
   config files, profiles, thresholds, mode flags, artifact keyword rules.
@@ -200,7 +202,8 @@ Critical behaviors that must stay stable:
 - `add_entity` creates the same result shape after moving creation logic to use cases;
 - L1 core signs are not overwritten by `recalc_signs`;
 - L4 signs stay separate from child artifact signs;
-- `suggest_metadata` keeps semantic bridges, cycle errors, and drift warnings stable;
+- `suggest_metadata` keeps semantic bridges, explicit-tag bridges, cycle errors,
+  and drift warnings stable;
 - `process_orphans` respects dry-run/limit behavior.
 
 ## Refactor Rules
@@ -229,7 +232,7 @@ Critical behaviors that must stay stable:
 - Extracted Markdown vault reads into `nouz_mcp/vault_io.py`.
 - Extracted application workflows `read_file`, `write_file`, `update_metadata`, `index_all_files`, `list_files`, `suggest_parents`, `suggest_metadata`, `process_orphans`, `add_entity`, `recalc_signs`, and `recalc_core_mix` into `nouz_mcp/use_cases.py`.
 - Extracted plain text file reads/writes into `nouz_mcp/vault_io.py`.
-- Extracted SQLite schema/migration, file indexing, core_mix aggregation/loading, basic graph-link reads, orphaned-link lookup, parent-candidate queries, embedding freshness/storage/loading, reference-vector storage, entity-path lookup, semantic-bridge candidate rows, and temporary-anchor candidate rows into `nouz_mcp/sqlite_store.py`.
+- Extracted SQLite schema/migration, file indexing, core_mix aggregation/loading, basic graph-link reads, orphaned-link lookup, parent-candidate queries, embedding freshness/storage/loading, reference-vector storage, entity-path lookup, semantic-bridge candidate rows, explicit-tag bridge candidate rows, and temporary-anchor candidate rows into `nouz_mcp/sqlite_store.py`.
 - Removed direct SQLite usage from `nouz_mcp/server.py`; MCP/server code now calls store helpers instead of issuing SQL.
 - Removed old private compatibility aliases from `nouz_mcp/server.py` such as helper wrappers for
   paths, Markdown parsing/dumping, vector math, serialization, graph reads, embedding storage,
@@ -242,7 +245,7 @@ Critical behaviors that must stay stable:
   `server.json`, included `docs/*.md` in the source distribution, and verified wheel import/entry point
   from an installed `--target` directory outside the repository source tree.
 
-## Remaining Refactor Targets (post-3.1.0)
+## Remaining Refactor Targets (post-3.2.0)
 
 - Extract the semantic-service surface (`_determine_core_by_embedding`,
   `_find_semantic_bridges`, `_calibrate_reference_vectors`,
