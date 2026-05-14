@@ -18,7 +18,7 @@ from nouz_mcp._version import __version__  # noqa: E402
 from nouz_mcp import calc_etalons  # noqa: E402
 from nouz_mcp.chunks import chunk_markdown  # noqa: E402
 from nouz_mcp.links import check_parents_exist, get_parents_meta  # noqa: E402
-from nouz_mcp.markdown import dump_metadata, explicit_tag_list, parse_frontmatter, split_frontmatter_raw, sync_parents_fields  # noqa: E402
+from nouz_mcp.markdown import canonical_tag, dump_metadata, explicit_tag_list, parse_frontmatter, split_frontmatter_raw, sync_parents_fields  # noqa: E402
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level  # noqa: E402
 from nouz_mcp.paths import default_db_path, safe_path  # noqa: E402
 from nouz_mcp.serialization import serialize  # noqa: E402
@@ -52,6 +52,7 @@ from nouz_mcp.sqlite_store import (  # noqa: E402
     list_parent_embedding_candidates as store_list_parent_embedding_candidates,
     list_semantic_bridge_rows as store_list_semantic_bridge_rows,
     list_sign_recalc_rows as store_list_sign_recalc_rows,
+    list_tag_bridge_rows as store_list_tag_bridge_rows,
     load_reference_vectors as store_load_reference_vectors,
     load_embedding as store_load_embedding,
     save_chunk_embeddings as store_save_chunk_embeddings,
@@ -67,6 +68,7 @@ from nouz_mcp.use_cases import read_file as read_file_use_case  # noqa: E402
 from nouz_mcp.use_cases import recalc_core_mix as recalc_core_mix_use_case  # noqa: E402
 from nouz_mcp.use_cases import recalc_signs as recalc_signs_use_case  # noqa: E402
 from nouz_mcp.use_cases import search_chunk_embeddings as search_chunk_embeddings_use_case  # noqa: E402
+from nouz_mcp.use_cases import suggest_tag_bridges as suggest_tag_bridges_use_case  # noqa: E402
 from nouz_mcp.use_cases import suggest_metadata as suggest_metadata_use_case  # noqa: E402
 from nouz_mcp.use_cases import suggest_parents as suggest_parents_use_case  # noqa: E402
 from nouz_mcp.use_cases import update_metadata as update_metadata_use_case  # noqa: E402
@@ -171,20 +173,6 @@ def test_public_metadata_json_files_parse():
     json.loads(Path("glama.json").read_text(encoding="utf-8"))
 
 
-def test_release_check_lists_verification_contract():
-    result = subprocess.run(
-        [sys.executable, "scripts/release_check.py", "--list"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    commands = json.loads(result.stdout)
-
-    assert ["python", "-m", "pytest", "-q"] in commands
-    assert ["python", "test_server.py"] in commands
-    assert all("twine" not in command for command in commands)
-
-
 def test_frontmatter_parser_reads_yaml_and_body():
     raw = "---\ntype: quant\nlevel: 4\nsign: T\n---\nBody text"
     attrs, body = parse_frontmatter(raw)
@@ -221,8 +209,9 @@ def test_metadata_dump_does_not_write_internal_fields():
 
 def test_explicit_tag_list_ignores_legacy_concepts():
     assert explicit_tag_list({"concepts": ["dirty", "legacy"]}) == []
-    assert explicit_tag_list({"tags": [" graph ", "", None, "graph"], "concepts": ["legacy"]}) == ["graph"]
+    assert explicit_tag_list({"tags": [" graph ", "", None, "graph", "Graph_Tag"], "concepts": ["legacy"]}) == ["graph", "graph-tag"]
     assert explicit_tag_list({"tags": "manual"}) == ["manual"]
+    assert canonical_tag("#Search Tag") == "search-tag"
 
     dumped = dump_metadata({"type": "quant", "level": 4, "sign": "S", "tags": [" graph ", "#search", "", None]})
     assert "tags:" in dumped
@@ -445,6 +434,7 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
         candidates = await store_list_embedding_candidates(db_path)
         assert any(row[0] == str(indexed_path) and row[1] == "quant" for row in candidates)
         assert any(row[0] == str(indexed_path) and row[1] == "S" for row in await store_list_semantic_bridge_rows(db_path))
+        assert any(row[0] == str(indexed_path) and json.loads(row[3]) == ["graph"] for row in await store_list_tag_bridge_rows(db_path))
         async with aiosqlite.connect(db_path) as db:
             async with db.execute("SELECT tags FROM files WHERE path = ?", (str(indexed_path),)) as cur:
                 row = await cur.fetchone()
@@ -1308,6 +1298,37 @@ def test_search_chunk_embeddings_use_case_ranks_stored_chunks():
     asyncio.run(scenario())
 
 
+def test_suggest_tag_bridges_use_case_uses_canonical_explicit_tags():
+    async def scenario():
+        async def list_tag_bridge_rows(db_path: str):
+            assert db_path == "db.sqlite"
+            return [
+                ("own.md", "S", "", json.dumps(["graph", "agent-context"])),
+                ("same.md", "D", "", json.dumps(["Graph", "other"])),
+                ("other.md", "E", "", json.dumps(["unrelated"])),
+                ("bad.md", "E", "", "not-json"),
+            ]
+
+        bridges = await suggest_tag_bridges_use_case(
+            "db.sqlite",
+            "own.md",
+            ["#graph", "Agent_Context"],
+            list_tag_bridge_rows=list_tag_bridge_rows,
+        )
+
+        assert bridges == [
+            {
+                "entity": "same",
+                "link_type": "tag",
+                "strength": 0.333,
+                "tags": ["graph"],
+                "reason": "shared explicit tags: graph",
+            }
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_suggest_metadata_use_case_wires_layers():
     async def scenario():
         calls = {"saved": None}
@@ -1339,6 +1360,9 @@ def test_suggest_metadata_use_case_wires_layers():
         async def find_semantic_bridges(db_path: str, own_path: str, own_sign: str, own_vec: list[float], own_sign_source: str):
             assert (own_path, own_sign, own_vec, own_sign_source) == ("child.md", "D", [1.0, 0.0], "auto")
             return [{"entity": "Bridge", "link_type": "semantic"}]
+
+        async def list_tag_bridge_rows(db_path: str):
+            return [("tagged.md", "S", "", json.dumps(["tag", "other"]))]
 
         async def resolve_entity_path(db_path: str, entity: str):
             assert entity == "Parent"
@@ -1384,6 +1408,7 @@ def test_suggest_metadata_use_case_wires_layers():
             determine_sign=determine_sign,
             get_level_from_meta=lambda meta: int(meta.get("level", 5)),
             find_semantic_bridges=find_semantic_bridges,
+            list_tag_bridge_rows=list_tag_bridge_rows,
             check_hierarchy=lambda entity_type, parents: [{"type": "existing"}],
             resolve_entity_path=resolve_entity_path,
             check_cycle_exists=check_cycle_exists,
@@ -1399,7 +1424,16 @@ def test_suggest_metadata_use_case_wires_layers():
         assert result["semantic_bridges"] == [
             {"entity": "Bridge", "link_type": "semantic", "proposed": True}
         ]
-        assert result["tag_bridges"] == []
+        assert result["tag_bridges"] == [
+            {
+                "entity": "tagged",
+                "link_type": "tag",
+                "strength": 0.5,
+                "tags": ["tag"],
+                "reason": "shared explicit tags: tag",
+                "proposed": True,
+            }
+        ]
         assert any(error.get("type") == "cycle_error" for error in result["errors"])
         assert result["core_percentages"] == {"D": 80.0, "S": 20.0}
         assert result["max_cosine"] == 0.9

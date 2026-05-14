@@ -12,8 +12,7 @@
 - Added `NOUZ_READ_ONLY=true` to hide and block mutating MCP tools.
 - Added manual `analogy` as an accepted `parents_meta.link_type`; NOUZ does not
   auto-generate analogy links.
-- Added `scripts/release_check.py` as a single local verification command for
-  compile, pytest, and `test_server.py`.
+- Added read-only `tag_bridges` suggestions from shared canonical YAML tags.
 
 ### Changed
 
@@ -29,16 +28,16 @@
   unless `NOUZ_CACHE_WRITE=true` is set; startup DB init/index/calibration is
   skipped under the same guard.
 - Tags are now explicit metadata only: NOUZ no longer calls an LLM to infer
-  tags, `add_entity`/`process_orphans` do not write generated tags, and
-  `suggest_metadata` keeps `tag_bridges` empty instead of proposing automatic
-  tag-based links.
-- Tag handling is centralized through explicit YAML `tags`: blank/duplicate
-  values are dropped, leading `#` is stripped for YAML storage, and legacy
-  `concepts` values are not promoted into indexed tags.
+  tags, and `add_entity`/`process_orphans` write tags only when they are passed
+  explicitly.
+- Explicit YAML tags are canonicalized for storage and tag-bridge matching:
+  leading `#` is removed, case is folded, and spaces/underscores become `-`.
 
 ### Verification
 
-- `python scripts/release_check.py`
+- `python -m compileall -q nouz_mcp pytest_smoke.py scripts`
+- `python -m pytest -q`
+- `python test_server.py`
 
 ## 3.1.0 - released 2026-05-13
 

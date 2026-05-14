@@ -24,6 +24,7 @@ FindOrphanedLinks = Callable[[str], Awaitable[List[Dict[str, str]]]]
 GetFileSummaries = Callable[[str, List[str]], Awaitable[Dict[str, tuple[str, Optional[int], str]]]]
 ListEmbeddingCandidates = Callable[[str], Awaitable[List[tuple[str, str, Optional[int], str, str]]]]
 ListParentEmbeddingCandidates = Callable[[str, str, int], Awaitable[List[tuple[str, str, Optional[int], str]]]]
+ListTagBridgeRows = Callable[[str], Awaitable[List[tuple[str, str, str, str]]]]
 DetermineCore = Callable[[str, str], Awaitable[Dict[str, Any]]]
 Cosine = Callable[[List[float], List[float]], float]
 ParseFrontmatter = Callable[[str], tuple[Dict[str, Any], str]]
@@ -194,6 +195,47 @@ async def search_chunk_embeddings(
 
     matches.sort(key=lambda item: -item["score"])
     return {"query": normalized_query, "top_k": limit, "matches": matches[:limit]}
+
+
+async def suggest_tag_bridges(
+    db_path: str,
+    own_path: str,
+    own_tags: List[str],
+    *,
+    list_tag_bridge_rows: ListTagBridgeRows,
+    top_n: int = 10,
+) -> List[Dict[str, Any]]:
+    """Suggest read-only tag links from shared canonical explicit YAML tags."""
+    own_tag_set = set(explicit_tag_list({"tags": own_tags}))
+    if not own_tag_set:
+        return []
+
+    bridges: List[Dict[str, Any]] = []
+    for path, _sign, _artifact_sign, tags_json in await list_tag_bridge_rows(db_path):
+        if path == own_path:
+            continue
+        try:
+            other_tags = json.loads(tags_json) if isinstance(tags_json, str) else tags_json
+        except Exception:
+            continue
+        other_tag_set = set(explicit_tag_list({"tags": other_tags}))
+        shared_tags = sorted(own_tag_set & other_tag_set)
+        if not shared_tags:
+            continue
+        union_size = len(own_tag_set | other_tag_set)
+        strength = len(shared_tags) / union_size if union_size else 0.0
+        bridges.append(
+            {
+                "entity": Path(path).stem,
+                "link_type": "tag",
+                "strength": round(strength, 3),
+                "tags": shared_tags,
+                "reason": "shared explicit tags: " + ", ".join(shared_tags),
+            }
+        )
+
+    bridges.sort(key=lambda item: (-len(item["tags"]), -item["strength"], item["entity"]))
+    return bridges[: max(1, min(int(top_n), 50))]
 
 
 async def list_files(
@@ -468,6 +510,7 @@ async def suggest_metadata(
     determine_sign: DetermineSign,
     get_level_from_meta: GetLevelFromMeta,
     find_semantic_bridges: FindSemanticBridges,
+    list_tag_bridge_rows: ListTagBridgeRows,
     check_hierarchy: CheckHierarchy,
     resolve_entity_path: ResolveEntityPath,
     check_cycle_exists: CheckCycleExists,
@@ -485,6 +528,7 @@ async def suggest_metadata(
     tags = explicit_tag_list(meta)
 
     semantic_bridges = []
+    tag_bridges = []
     vec = []
     if file_path and reference_vectors:
         if not await embedding_is_fresh(db_path, file_path):
@@ -503,6 +547,13 @@ async def suggest_metadata(
     if vec and file_path and semantic_bridges_enabled:
         semantic_bridges = await find_semantic_bridges(
             db_path, str(file_path), actual_sign, vec, sign_source
+        )
+    if file_path and tags:
+        tag_bridges = await suggest_tag_bridges(
+            db_path,
+            str(file_path),
+            tags,
+            list_tag_bridge_rows=list_tag_bridge_rows,
         )
 
     errors = check_hierarchy(type_, parents_obj)
@@ -537,7 +588,9 @@ async def suggest_metadata(
         "semantic_bridges": [
             {**bridge, "proposed": True} for bridge in semantic_bridges
         ],
-        "tag_bridges": [],
+        "tag_bridges": [
+            {**bridge, "proposed": True} for bridge in tag_bridges
+        ],
     }
 
     if content and reference_vectors:

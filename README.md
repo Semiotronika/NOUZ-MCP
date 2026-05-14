@@ -23,7 +23,7 @@ NOUZ выступает прослойкой между вашей базой з
 2. **Поиск связей между заметками**
    Сервер строит направленный граф (DAG) и предлагает связи, которые можно проверить перед записью:
    - *Семантические мосты:* две заметки из разных доменов указывают на одну и ту же идею.
-   - Явные `tag`-связи можно хранить вручную в `parents_meta`, но NOUZ не генерирует теги и не строит автоматические связи по тегам.
+   - Явные `tag`-связи можно хранить вручную в `parents_meta`; `suggest_metadata` также предлагает read-only `tag_bridges` по пересечению явных канонических YAML-тегов.
 
 3. **Отслеживание эволюции базы (Дрифт)**
    NOUZ агрегирует данные снизу вверх. Если модуль начинался как один домен, а новые заметки постепенно уводят его в другой, сервер покажет расхождение (`core_drift`).
@@ -132,7 +132,8 @@ OBSIDIAN_ROOT=./vault python server.py
 
 `parents_meta.link_type` поддерживает ручные связи `hierarchy`, `semantic`,
 `temporary`, `tag`, `analogy` и `error`. NOUZ не генерирует аналогии
-автоматически.
+автоматически. `tag_bridges` в `suggest_metadata` являются предложениями по
+явным YAML-тегам и сами не записываются в файл.
 
 ---
 
@@ -258,7 +259,9 @@ S↔D: -0.5059   S↔E: -0.5117   D↔E: -0.4822
 git clone https://github.com/Semiotronika/NOUZ-MCP
 cd NOUZ-MCP
 pip install -e .
-python scripts/release_check.py
+python -m compileall -q nouz_mcp pytest_smoke.py scripts
+python -m pytest -q
+python test_server.py
 ```
 
 ---

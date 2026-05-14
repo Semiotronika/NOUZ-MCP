@@ -509,6 +509,16 @@ async def list_semantic_bridge_rows(db_path: str) -> List[tuple[str, str, str, s
             return await cur.fetchall()
 
 
+async def list_tag_bridge_rows(db_path: str) -> List[tuple[str, str, str, str]]:
+    """Return indexed files with explicit YAML tags for tag bridge suggestions."""
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            "SELECT path, sign, artifact_sign, tags FROM files "
+            "WHERE tags IS NOT NULL AND tags != '' AND tags != '[]'"
+        ) as cur:
+            return await cur.fetchall()
+
+
 async def load_reference_vectors(db_path: str) -> Dict[str, List[float]]:
     """Load calibrated core reference vectors from SQLite."""
     vectors: Dict[str, List[float]] = {}

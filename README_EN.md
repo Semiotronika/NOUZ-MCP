@@ -23,7 +23,7 @@ NOUZ sits between your note base and your AI agent. It helps turn scattered Mark
 2. **Connection Discovery Between Notes**
    The server builds a directed graph (DAG) and proposes links that can be reviewed before they are written:
    - *Semantic bridges:* two notes from different domains point to the same idea.
-   - Explicit `tag` links can be stored manually in `parents_meta`, but NOUZ does not generate tags or automatic tag-based links.
+   - Explicit `tag` links can be stored manually in `parents_meta`; `suggest_metadata` also proposes read-only `tag_bridges` from shared canonical YAML tags.
 
 3. **Base Evolution Tracking (Drift)**  
    NOUZ aggregates data bottom-up. If a module started in one domain while new notes gradually pull it into another, the server shows the divergence (`core_drift`).
@@ -132,6 +132,8 @@ table, and `search_chunks` ranks them by cosine similarity to the query.
 
 `parents_meta.link_type` supports manual `hierarchy`, `semantic`, `temporary`,
 `tag`, `analogy`, and `error` links. NOUZ does not auto-generate analogy links.
+`tag_bridges` in `suggest_metadata` are suggestions from explicit YAML tags and
+are not written back to files.
 
 ---
 
@@ -257,7 +259,9 @@ Everything critical stays on your machine.
 git clone https://github.com/Semiotronika/NOUZ-MCP
 cd NOUZ-MCP
 pip install -e .
-python scripts/release_check.py
+python -m compileall -q nouz_mcp pytest_smoke.py scripts
+python -m pytest -q
+python test_server.py
 ```
 
 ---

@@ -8,6 +8,7 @@ import yaml
 
 YAML_ALLOWED_KEYS = {'type', 'level', 'sign', 'artifact_sign', 'status', 'tags', 'parents', 'parents_meta'}
 KEY_ORDER = ['type', 'level', 'sign', 'artifact_sign', 'status', 'tags', 'parents', 'parents_meta']
+TAG_SEPARATOR_RE = re.compile(r"[\s_]+")
 
 
 def parse_frontmatter(raw: str) -> tuple[Dict[str, Any], str]:
@@ -61,8 +62,20 @@ def _has_yaml_value(value: Any) -> bool:
     return True
 
 
+def canonical_tag(value: Any) -> str:
+    """Return the canonical form used for YAML tags and tag bridges."""
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return ""
+    tag = str(value).strip().lstrip("#").strip().lower()
+    if tag in {"", "none", "null"}:
+        return ""
+    tag = TAG_SEPARATOR_RE.sub("-", tag)
+    tag = re.sub(r"-{2,}", "-", tag).strip("-")
+    return tag
+
+
 def explicit_tag_list(metadata: Dict[str, Any]) -> list[str]:
-    """Return only explicitly provided YAML tags, cleaned for storage/writes."""
+    """Return canonical YAML tags that were explicitly provided in metadata."""
     raw = metadata.get("tags", [])
     if raw in (None, "", "None", "none", "NULL", "null"):
         return []
@@ -71,13 +84,7 @@ def explicit_tag_list(metadata: Dict[str, Any]) -> list[str]:
     tags: list[str] = []
     seen: set[str] = set()
     for value in values:
-        if value is None or isinstance(value, (dict, list, tuple, set)):
-            continue
-        tag = str(value).strip()
-        if tag.lower() in {"", "none", "null"}:
-            continue
-        if tag.startswith("#"):
-            tag = tag.lstrip("#").strip()
+        tag = canonical_tag(value)
         if not tag or tag in seen:
             continue
         tags.append(tag)
