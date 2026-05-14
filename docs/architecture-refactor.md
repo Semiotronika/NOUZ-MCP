@@ -240,12 +240,12 @@ Critical behaviors that must stay stable:
 - Added smoke coverage for extracted helpers.
 - Verified packaging with `python -m build --no-isolation --sdist --wheel` into an ignored temporary build directory;
   the wheel includes all newly extracted package modules.
-- Ran a release-candidate public-file pass: removed obsolete threshold/dependency remnants,
+- Ran a public-file cleanup pass: removed obsolete threshold/dependency remnants,
   clarified the embedding provider description in
   `server.json`, included `docs/*.md` in the source distribution, and verified wheel import/entry point
   from an installed `--target` directory outside the repository source tree.
 
-## Remaining Refactor Targets (post-3.2.0)
+## Remaining Refactor Targets
 
 - Extract the semantic-service surface (`_determine_core_by_embedding`,
   `_find_semantic_bridges`, `_calibrate_reference_vectors`,
@@ -255,5 +255,3 @@ Critical behaviors that must stay stable:
 - Once the semantic service is in place, evaluate the Version B subpackage
   layout (`app/`, `domain/`, `io/`, `store/`, `semantics/`) and decide whether
   the extra hierarchy still earns its weight.
-- Remove ignored local build artifacts after Windows releases file locks
-  (`.build-tmp/`, `build/`, `*.egg-info/`, `pytest-cache-files-*/`).
