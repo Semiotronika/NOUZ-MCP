@@ -88,6 +88,54 @@ from nouz_mcp.vectors import cosine, mean_center
 VERSION = __version__
 
 
+READ_ONLY_DISABLED_TOOLS = frozenset(
+    {
+        "write_file",
+        "update_metadata",
+        "index_all",
+        "calibrate_cores",
+        "recalc_core_mix",
+        "recalc_signs",
+        "process_orphans",
+        "add_entity",
+    }
+)
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+READ_ONLY = env_flag("NOUZ_READ_ONLY")
+
+
+def is_read_only_disabled_tool(name: str) -> bool:
+    """Return True for tools hidden and blocked in public read-only mode."""
+    return name in READ_ONLY_DISABLED_TOOLS
+
+
+def filter_read_only_tools(tools: list[types.Tool], *, read_only: bool) -> list[types.Tool]:
+    """Hide mutating tools when NOUZ_READ_ONLY is enabled."""
+    if not read_only:
+        return tools
+    return [tool for tool in tools if not is_read_only_disabled_tool(tool.name)]
+
+
+def read_only_tool_error(name: str) -> list[types.TextContent]:
+    return [
+        types.TextContent(
+            type="text",
+            text=json.dumps(
+                {"error": f"Tool '{name}' is disabled because NOUZ_READ_ONLY=true."},
+                ensure_ascii=False,
+            ),
+        )
+    ]
+
+
 # ============================================================================
 # Mode Configuration
 # ============================================================================
@@ -924,6 +972,8 @@ async def run_server():
     logger.info(f"Mode: {MODE}")
     logger.info(f"Core etalons: {list(CORE_SIGNS)}")
     logger.info(f"Level map: {LEVEL_MAP}")
+    if READ_ONLY:
+        logger.info("Read-only mode enabled: mutating tools are hidden and blocked.")
 
     @server.list_tools()
     async def handle_list_tools() -> list[types.Tool]:
@@ -962,7 +1012,7 @@ async def run_server():
                                 "sign": {"type": "string", "description": "Domain sign assigned manually or by semantic classification, e.g. S, D, E."},
                                 "artifact_sign": {"type": "string", "description": "Material type sign for artifacts/quants, e.g. note, concept, reference, log, update, hypothesis, specification."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Obsidian wiki links for parents, e.g. ['[[Systems]]']."},
-                                "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "tag", "error"]}}}, "description": "Structured parent links used by NOUZ."},
+                                "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "tag", "analogy", "error"]}}}, "description": "Structured parent links used by NOUZ."},
                                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Search and semantic tags."}
                             }
                         },
@@ -1018,7 +1068,7 @@ async def run_server():
             types.Tool(
                 name="get_parents",
                 description="Return the parent links of one note from the graph index. Each result includes the parent entity name "
-                            "and link_type, such as hierarchy, semantic, temporary, tag, or error. Use this to understand "
+                            "and link_type, such as hierarchy, semantic, temporary, tag, analogy, or error. Use this to understand "
                             "where a note belongs before editing links. It is read-only. Use suggest_parents when a note has no "
                             "parents and you want candidate links.",
                 inputSchema={
@@ -1197,7 +1247,7 @@ async def run_server():
                                     "type": "object",
                                     "properties": {
                                         "entity": {"type": "string", "description": "Parent entity name or path."},
-                                        "link_type": {"type": "string", "description": "Relationship type.", "enum": ["hierarchy", "semantic", "temporary", "tag", "error"]}
+                                        "link_type": {"type": "string", "description": "Relationship type.", "enum": ["hierarchy", "semantic", "temporary", "tag", "analogy", "error"]}
                                     },
                                     "required": ["entity"]
                                 },
@@ -1213,12 +1263,15 @@ async def run_server():
                 )
             )
         
-        return tools
+        return filter_read_only_tools(tools, read_only=READ_ONLY)
 
     @server.call_tool()
     async def handle_call_tool(name: str, arguments: dict | None) -> list[types.TextContent]:
         args = arguments or {}
         try:
+            if READ_ONLY and is_read_only_disabled_tool(name):
+                return read_only_tool_error(name)
+
             if name == "read_file":
                 rel = args.get("path", "")
                 full = safe_path(OBSIDIAN_ROOT, rel)

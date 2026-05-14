@@ -81,6 +81,25 @@ def test_package_server_exposes_server_api():
     assert callable(server.main)
 
 
+def test_read_only_tool_filter_hides_mutating_tools():
+    tools = [
+        server.types.Tool(name="read_file", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="write_file", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="index_all", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="suggest_metadata", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="recalc_signs", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="chunk_file", description="", inputSchema={"type": "object"}),
+    ]
+
+    visible = server.filter_read_only_tools(tools, read_only=True)
+    visible_names = {tool.name for tool in visible}
+
+    assert visible_names == {"read_file", "suggest_metadata", "chunk_file"}
+    assert server.filter_read_only_tools(tools, read_only=False) == tools
+    assert server.is_read_only_disabled_tool("write_file") is True
+    assert server.is_read_only_disabled_tool("chunk_file") is False
+
+
 def test_public_metadata_versions_match_package_version():
     server_json = json.loads(Path("server.json").read_text(encoding="utf-8"))
     assert server_json["version"] == __version__
@@ -395,16 +414,21 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
 
 def test_link_helpers_are_directly_usable(tmp_path):
     meta = {
-        "parents_meta": ["[[Module]]", {"entity": "Concept", "link_type": "semantic"}],
+        "parents_meta": [
+            "[[Module]]",
+            {"entity": "Concept", "link_type": "semantic"},
+            {"entity": "Analogy", "link_type": "analogy"},
+        ],
         "parents": ["Fallback"],
     }
     assert get_parents_meta(meta) == [
         {"entity": "Module", "link_type": "hierarchy"},
         {"entity": "Concept", "link_type": "semantic"},
+        {"entity": "Analogy", "link_type": "analogy"},
     ]
 
     (tmp_path / "Module.md").write_text("---\n---\n", encoding="utf-8")
-    assert check_parents_exist(str(tmp_path), meta) == ["Concept"]
+    assert check_parents_exist(str(tmp_path), meta) == ["Concept", "Analogy"]
 
 
 def test_semantics_helpers_are_directly_usable():

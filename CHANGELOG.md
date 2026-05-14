@@ -7,6 +7,9 @@
 - Added deterministic Markdown chunking as a low-level retrieval primitive:
   `nouz_mcp.chunks.chunk_markdown`, plus read-only MCP tools `chunk_text` and
   `chunk_file`.
+- Added `NOUZ_READ_ONLY=true` to hide and block mutating MCP tools.
+- Added manual `analogy` as an accepted `parents_meta.link_type`; NOUZ does not
+  auto-generate analogy links.
 - Added `scripts/release_check.py` as a single local verification command for
   compile, pytest, and `test_server.py`.
 

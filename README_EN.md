@@ -115,6 +115,14 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 | `add_entity` | Create an entity in one step (auto sign, tags, parents) |
 | `process_orphans` | Auto-fill files without markup |
 
+Set `NOUZ_READ_ONLY=true` to hide and block mutating tools (`write_file`,
+`update_metadata`, `index_all`, recalculation, orphan processing, and entity
+creation). Read-only tools such as `read_file`, `suggest_metadata`, `embed`,
+`chunk_text`, and `chunk_file` remain available.
+
+`parents_meta.link_type` supports manual `hierarchy`, `semantic`, `temporary`,
+`tag`, `analogy`, and `error` links. NOUZ does not auto-generate analogy links.
+
 ---
 
 ## Configuration

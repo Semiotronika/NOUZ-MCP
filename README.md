@@ -115,6 +115,15 @@ OBSIDIAN_ROOT=./vault python server.py
 | `add_entity` | Создать сущность в один шаг (авто sign, tags, parents) |
 | `process_orphans` | Автозаполнение файлов без разметки |
 
+Установите `NOUZ_READ_ONLY=true`, чтобы скрыть и заблокировать инструменты,
+которые меняют базу (`write_file`, `update_metadata`, `index_all`, пересчёты,
+обработку сирот и создание сущностей). Read-only инструменты вроде `read_file`,
+`suggest_metadata`, `embed`, `chunk_text` и `chunk_file` останутся доступны.
+
+`parents_meta.link_type` поддерживает ручные связи `hierarchy`, `semantic`,
+`temporary`, `tag`, `analogy` и `error`. NOUZ не генерирует аналогии
+автоматически.
+
 ---
 
 ## Конфигурация
