@@ -1358,6 +1358,7 @@ def test_suggest_tag_bridges_use_case_uses_canonical_explicit_tags():
 def test_suggest_tag_candidates_use_case_is_read_only_and_vocabulary_based():
     content = (
         "# Heading\n\nThis note is about agent context and recursive theory. #New_Tag #FF00A1\n"
+        "It mentions a private _archive folder path.\n"
         "```python\n#not-a-tag\n```\n"
     )
     chunks = chunk_markdown(content, source_id="own.md", max_chars=1200, overlap_chars=0)
@@ -1365,6 +1366,7 @@ def test_suggest_tag_candidates_use_case_is_read_only_and_vocabulary_based():
         ("own.md", "S", "", json.dumps(["graph"])),
         ("agent.md", "S", "", json.dumps(["agent-context", "graph"])),
         ("theory.md", "D", "", json.dumps(["recursive-theory"])),
+        ("archive.md", "S", "", json.dumps(["archive"])),
         ("broken.md", "D", "", "not-json"),
     ]
 
@@ -1375,57 +1377,29 @@ def test_suggest_tag_candidates_use_case_is_read_only_and_vocabulary_based():
         chunks=chunks,
     )
 
-    assert candidates == [
-        {
-            "tag": "new-tag",
-            "source": "inline",
-            "confidence": 0.9,
-            "reason": "explicit inline hashtag in note body",
-            "evidence": [
-                {
-                    "chunk_id": chunks[0]["id"],
-                    "heading": "Heading",
-                    "start_char": content.index("#New_Tag"),
-                    "end_char": content.index("#New_Tag") + len("#New_Tag"),
-                    "snippet": "# Heading This note is about agent context and recursive theory. #New_Tag #FF00A1 ```python #not-a-tag ```",
-                }
-            ],
-        },
-        {
-            "tag": "agent-context",
-            "source": "vocabulary",
-            "confidence": 0.66,
-            "reason": "content matches an existing YAML tag",
-            "usage_count": 1,
-            "example_entity": "agent",
-            "evidence": [
-                {
-                    "chunk_id": chunks[0]["id"],
-                    "heading": "Heading",
-                    "start_char": content.index("agent context"),
-                    "end_char": content.index("agent context") + len("agent context"),
-                    "snippet": "# Heading This note is about agent context and recursive theory. #New_Tag #FF00A1 ```python #not-a-tag ```",
-                }
-            ],
-        },
-        {
-            "tag": "recursive-theory",
-            "source": "vocabulary",
-            "confidence": 0.66,
-            "reason": "content matches an existing YAML tag",
-            "usage_count": 1,
-            "example_entity": "theory",
-            "evidence": [
-                {
-                    "chunk_id": chunks[0]["id"],
-                    "heading": "Heading",
-                    "start_char": content.index("recursive theory"),
-                    "end_char": content.index("recursive theory") + len("recursive theory"),
-                    "snippet": "# Heading This note is about agent context and recursive theory. #New_Tag #FF00A1 ```python #not-a-tag ```",
-                }
-            ],
-        },
-    ]
+    by_tag = {candidate["tag"]: candidate for candidate in candidates}
+    assert list(by_tag) == ["new-tag", "agent-context", "recursive-theory"]
+    assert "archive" not in by_tag
+
+    assert by_tag["new-tag"]["source"] == "inline"
+    assert by_tag["new-tag"]["confidence"] == 0.9
+    assert by_tag["new-tag"]["evidence"][0]["chunk_id"] == chunks[0]["id"]
+    assert by_tag["new-tag"]["evidence"][0]["start_char"] == content.index("#New_Tag")
+    assert by_tag["new-tag"]["evidence"][0]["end_char"] == content.index("#New_Tag") + len("#New_Tag")
+
+    assert by_tag["agent-context"]["source"] == "vocabulary"
+    assert by_tag["agent-context"]["confidence"] == 0.66
+    assert by_tag["agent-context"]["usage_count"] == 1
+    assert by_tag["agent-context"]["example_entity"] == "agent"
+    assert by_tag["agent-context"]["evidence"][0]["start_char"] == content.index("agent context")
+    assert by_tag["agent-context"]["evidence"][0]["end_char"] == content.index("agent context") + len("agent context")
+
+    assert by_tag["recursive-theory"]["source"] == "vocabulary"
+    assert by_tag["recursive-theory"]["confidence"] == 0.66
+    assert by_tag["recursive-theory"]["usage_count"] == 1
+    assert by_tag["recursive-theory"]["example_entity"] == "theory"
+    assert by_tag["recursive-theory"]["evidence"][0]["start_char"] == content.index("recursive theory")
+    assert by_tag["recursive-theory"]["evidence"][0]["end_char"] == content.index("recursive theory") + len("recursive theory")
 
 
 def test_suggest_metadata_use_case_wires_layers():

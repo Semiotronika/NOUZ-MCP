@@ -290,6 +290,9 @@ def suggest_tag_candidates(
             continue
         usage_count = int(info["count"])
         confidence = min(0.92, 0.55 + min(occurrences, 3) * 0.08 + min(usage_count, 5) * 0.03)
+        evidence = _tag_evidence(tag, chunks or [], source="vocabulary")
+        if chunks and not evidence:
+            continue
         candidates[tag] = {
             "tag": tag,
             "source": "vocabulary",
@@ -297,7 +300,7 @@ def suggest_tag_candidates(
             "reason": "content matches an existing YAML tag",
             "usage_count": usage_count,
             "example_entity": info["example_entity"],
-            "evidence": _tag_evidence(tag, chunks or [], source="vocabulary"),
+            "evidence": evidence,
         }
 
     result = list(candidates.values())
