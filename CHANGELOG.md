@@ -24,6 +24,10 @@
 - In `NOUZ_READ_ONLY=true`, read-only tools no longer refresh the SQLite cache
   unless `NOUZ_CACHE_WRITE=true` is set; startup DB init/index/calibration is
   skipped under the same guard.
+- Tags are now explicit metadata only: NOUZ no longer calls an LLM to infer
+  tags, `add_entity`/`process_orphans` do not write generated tags, and
+  `suggest_metadata` keeps `tag_bridges` empty instead of proposing automatic
+  tag-based links.
 
 ### Verification
 

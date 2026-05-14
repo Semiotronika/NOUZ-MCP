@@ -34,8 +34,6 @@ from nouz_mcp.markdown import dump_metadata, parse_frontmatter, split_frontmatte
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level
 from nouz_mcp.paths import default_db_path, safe_path
 from nouz_mcp.serialization import serialize
-from nouz_mcp.semantics import call_llm as call_semantic_llm
-from nouz_mcp.semantics import extract_tags as extract_semantic_tags
 from nouz_mcp.semantics import get_embedding as get_semantic_embedding
 from nouz_mcp.signs import (
     determine_artifact_sign,
@@ -62,7 +60,6 @@ from nouz_mcp.sqlite_store import (
     list_parent_embedding_candidates,
     list_semantic_bridge_rows,
     list_sign_recalc_rows,
-    list_tag_bridge_rows,
     load_reference_vectors as load_store_reference_vectors,
     load_embedding as load_store_embedding,
     save_reference_vector as save_store_reference_vector,
@@ -209,9 +206,6 @@ EXCLUDED_DIRS = {
     ".obsidian"
 }
 
-LLM_API_URL = os.getenv("LLM_API_URL", "http://127.0.0.1:1234/v1")
-LLM_MODEL = os.getenv("LLM_MODEL", "")
-
 EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "openai").lower()
 EMBED_ENABLED = os.getenv("EMBED_ENABLED", "true").lower() == "true"
 EMBED_MODEL = os.getenv("EMBED_MODEL", "")
@@ -234,14 +228,8 @@ embed_cache: Dict[str, List[float]] = {}
 
 
 # ============================================================================
-# LLM & Embeddings
+# Embeddings
 # ============================================================================
-
-async def _call_llm(prompt: str) -> str:
-    return await call_semantic_llm(prompt, LLM_API_URL, LLM_MODEL, logger)
-
-async def _extract_tags(content: str) -> List[str]:
-    return await extract_semantic_tags(content, LLM_MODEL, _call_llm)
 
 async def _get_embedding(text: str) -> List[float]:
     return await get_semantic_embedding(
@@ -422,80 +410,6 @@ async def _find_semantic_bridges(
 
     bridges.sort(key=lambda x: -x["strength"])
     return bridges[:10]
-
-async def _find_tag_bridges(
-    db_path: str, own_path: str, own_tags: List[str], own_sign: str,
-    threshold: float = 0.72
-) -> List[Dict]:
-    """Gray bridges: semantic similarity at the tag level, not full text.
-
-    Algorithm:
-    - For each tag of the current note: compute embedding
-    - For each other note with a DIFFERENT core: compute embedding of each tag
-    - If at least one tag pair gives cosine >= threshold -> gray bridge
-    - Finds partial concept overlap, not full-text similarity
-
-    Difference from pink (semantic) bridges:
-    - Pink: cosine of full text -- "these notes are about the same thing"
-    - Gray: cosine of individual tags -- "these notes share a hidden concept"
-
-    Example: note about product architecture and note about release planning:
-    texts are different, but tag "entropy" can be close to tag "disorder"
-    in embedding space, so the bridge reveals a shared concept.
-    """
-    if not RULE["semantic_bridges"] or not own_tags:
-        return []
-
-    own_tag_vecs: Dict[str, List[float]] = {}
-    for tag in own_tags:
-        vec = await _get_embedding(tag)
-        if vec:
-            own_tag_vecs[tag] = vec
-
-    if not own_tag_vecs:
-        return []
-
-    bridges = []
-    seen_paths = set()
-
-    for path, other_sign, other_artifact_sign, tags_json in await list_tag_bridge_rows(db_path):
-        if path == own_path or path in seen_paths:
-            continue
-        other_display = other_sign or other_artifact_sign or ""
-        if _signs_share_core(own_sign, other_display):
-            continue
-
-        try:
-            other_tags = json.loads(tags_json) if isinstance(tags_json, str) else tags_json
-            if not other_tags:
-                continue
-        except Exception:
-            continue
-
-        best_pair = None
-        best_sim = 0.0
-        for own_tag, own_vec in own_tag_vecs.items():
-            for other_tag in other_tags:
-                other_vec = await _get_embedding(other_tag)
-                if not other_vec:
-                    continue
-                sim = cosine(own_vec, other_vec)
-                if sim >= threshold and sim > best_sim:
-                    best_sim = sim
-                    best_pair = (own_tag, other_tag)
-
-        if best_pair:
-            seen_paths.add(path)
-            bridges.append({
-                "entity": Path(path).stem,
-                "link_type": "tag",
-                "strength": round(best_sim, 3),
-                "reason": f"tag bridge: '{best_pair[0]}' <-> '{best_pair[1]}' (cosine={best_sim:.2f}), signs={own_sign}<->{other_display}",
-            })
-
-    bridges.sort(key=lambda x: -x["strength"])
-    return bridges[:10]
-
 
 async def _load_reference_vectors(db_path: str) -> Dict[str, List[float]]:
     if not RULE["reference_vectors"]:
@@ -799,7 +713,6 @@ async def _suggest_metadata_impl(
         core_signs=CORE_SIGNS,
         get_parents_meta=get_parents_meta,
         determine_type=_determine_type,
-        extract_tags=_extract_tags,
         embedding_is_fresh=store_embedding_is_fresh,
         get_embedding=_get_embedding,
         save_embedding=save_store_embedding if CACHE_WRITE else _skip_save_embedding,
@@ -807,7 +720,6 @@ async def _suggest_metadata_impl(
         determine_sign=_determine_sign_smart,
         get_level_from_meta=_get_level_from_meta,
         find_semantic_bridges=_find_semantic_bridges,
-        find_tag_bridges=_find_tag_bridges,
         check_hierarchy=_check_hierarchy,
         resolve_entity_path=_resolve_entity_path,
         check_cycle_exists=check_cycle_exists,
@@ -915,7 +827,6 @@ async def _process_orphans(
         parse_frontmatter=parse_frontmatter,
         get_level_from_meta=_get_level_from_meta,
         determine_sign=_determine_sign_smart,
-        extract_tags=_extract_tags,
         get_parents_meta=get_parents_meta,
         get_embedding=_get_embedding,
         determine_core=_determine_core_by_embedding,
@@ -1039,7 +950,7 @@ async def run_server():
             types.Tool(
                 name="read_file",
                 description="Read one Markdown note from the local knowledge base. Returns the note body, YAML frontmatter, "
-                            "hierarchy metadata, parent links, tags, and warnings as JSON. Use this before write_file when you need "
+                            "hierarchy metadata, parent links, explicit tags, and warnings as JSON. Use this before write_file when you need "
                             "to preserve existing content or inspect current metadata. Side effect: refreshes this file in the local "
                             "SQLite index so later classification and parent suggestions use current data. It never changes the file.",
                 inputSchema={
@@ -1071,7 +982,7 @@ async def run_server():
                                 "artifact_sign": {"type": "string", "description": "Material type sign for artifacts/quants, e.g. note, concept, reference, log, update, hypothesis, specification."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Obsidian wiki links for parents, e.g. ['[[Systems]]']."},
                                 "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "tag", "analogy", "error"]}}}, "description": "Structured parent links used by NOUZ."},
-                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Search and semantic tags."}
+                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit search or semantic tags. NOUZ does not infer tags."}
                             }
                         },
                         "content_lock": {"type": "boolean", "description": "If true, IGNORE content param and preserve original file text. Default false.", "default": False}
@@ -1138,7 +1049,7 @@ async def run_server():
             types.Tool(
                 name="suggest_metadata",
                 description="Analyze one note and propose knowledge-graph metadata for review. Returns suggested domain sign, "
-                            "material type, hierarchy level, tags, bridge candidates, and hierarchy warnings. Use this before "
+                            "material type, hierarchy level, explicit tags, bridge candidates, and hierarchy warnings. Use this before "
                             "write_file when you want classification help, or to audit an existing note. It is read-only and never "
                             "edits YAML. Semantic fields require embeddings and are available in PRIZMA/SLOI modes. The optional "
                             "context object lets an agent test metadata overrides without changing the note.",
@@ -1154,7 +1065,7 @@ async def run_server():
                                 "level": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5]},
                                 "sign": {"type": "string", "description": "Candidate domain sign to evaluate."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Candidate parent wiki links."},
-                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Candidate tags."}
+                                "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags for what-if analysis. NOUZ does not infer tags."}
                             }
                         }
                     },
@@ -1287,7 +1198,7 @@ async def run_server():
                 types.Tool(
                     name="process_orphans",
                     description="Batch-process notes that are missing key metadata. It can propose or write domain signs, material "
-                                "types, tags, and parent links for newly created or orphaned Markdown files. Use dry_run=true first "
+                                "types, and parent links for newly created or orphaned Markdown files. Use dry_run=true first "
                                 "to review proposed changes. With dry_run=false this writes YAML frontmatter to files, so it should "
                                 "be used after inspection or on a trusted batch.",
                     inputSchema={
@@ -1304,8 +1215,9 @@ async def run_server():
                 types.Tool(
                     name="add_entity",
                     description="Create a new knowledge-base entity as a Markdown file, then assign initial graph metadata. Use this "
-                                "for new notes when the agent has the content and should let NOUZ infer level, domain sign, tags, "
-                                "and optional parent links. Set auto_parents=false when a human will choose parents manually. This "
+                                "for new notes when the agent has the content and should let NOUZ infer level, domain sign, "
+                                "and optional parent links. Tags are written only when passed explicitly. Set auto_parents=false "
+                                "when a human will choose parents manually. This "
                                 "writes a new file and returns the metadata that was applied.",
                     inputSchema={
                         "type": "object",
@@ -1325,7 +1237,7 @@ async def run_server():
                                 },
                                 "description": "Explicit parent links. Optional; auto-suggested if empty and auto_parents=true."
                             },
-                            "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags (auto-extracted if empty)"},
+                            "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit tags to write. NOUZ does not infer tags."},
                             "sign": {"type": "string", "description": "Manual sign override (auto-determined if empty)"},
                             "auto_parents": {"type": "boolean", "description": "If true and no explicit parents, auto-link to top suggested parent (default true)"},
                             "type": {"type": "string", "description": "Entity type (default 'artifact' for L5)", "enum": ["core", "pattern", "module", "quant", "artifact"]}
@@ -1534,7 +1446,6 @@ async def run_server():
                     core_signs=CORE_SIGNS,
                     get_type_by_level=get_type_by_level,
                     determine_sign=_determine_sign_smart,
-                    extract_tags=_extract_tags,
                     get_embedding=_get_embedding,
                     determine_core=_determine_core_by_embedding,
                     list_parent_candidates=list_parent_embedding_candidates,

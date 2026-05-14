@@ -22,7 +22,7 @@ from nouz_mcp.markdown import dump_metadata, parse_frontmatter, split_frontmatte
 from nouz_mcp.modes import build_rules, get_level, get_type_by_level  # noqa: E402
 from nouz_mcp.paths import default_db_path, safe_path  # noqa: E402
 from nouz_mcp.serialization import serialize  # noqa: E402
-from nouz_mcp.semantics import clean_tag_result, extract_tags as extract_semantic_tags, get_embedding  # noqa: E402
+from nouz_mcp.semantics import get_embedding  # noqa: E402
 from nouz_mcp.signs import (  # noqa: E402
     artifact_keywords,
     artifact_sign,
@@ -51,7 +51,6 @@ from nouz_mcp.sqlite_store import (  # noqa: E402
     list_parent_embedding_candidates as store_list_parent_embedding_candidates,
     list_semantic_bridge_rows as store_list_semantic_bridge_rows,
     list_sign_recalc_rows as store_list_sign_recalc_rows,
-    list_tag_bridge_rows as store_list_tag_bridge_rows,
     load_reference_vectors as store_load_reference_vectors,
     load_embedding as store_load_embedding,
     save_chunk_embeddings as store_save_chunk_embeddings,
@@ -421,7 +420,11 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
         candidates = await store_list_embedding_candidates(db_path)
         assert any(row[0] == str(indexed_path) and row[1] == "quant" for row in candidates)
         assert any(row[0] == str(indexed_path) and row[1] == "S" for row in await store_list_semantic_bridge_rows(db_path))
-        assert any(row[0] == str(indexed_path) and row[3] == json.dumps(["graph"]) for row in await store_list_tag_bridge_rows(db_path))
+        async with aiosqlite.connect(db_path) as db:
+            async with db.execute("SELECT tags FROM files WHERE path = ?", (str(indexed_path),)) as cur:
+                row = await cur.fetchone()
+        assert row is not None
+        assert json.loads(row[0]) == ["graph"]
         async with aiosqlite.connect(db_path) as db:
             await db.executemany(
                 "UPDATE files SET sign = ? WHERE path = ?",
@@ -490,17 +493,8 @@ def test_link_helpers_are_directly_usable(tmp_path):
     assert check_parents_exist(str(tmp_path), meta) == ["Concept", "Analogy"]
 
 
-def test_semantics_helpers_are_directly_usable():
+def test_semantics_embedding_helper_is_directly_usable():
     async def scenario():
-        async def fake_llm(prompt: str) -> str:
-            assert "Extract 3-5 keywords" in prompt
-            return "Keywords: #Graph, Semantic bridge\nterms: ignored prefix, NOUZ"
-
-        tags = await extract_semantic_tags("NOUZ graph text", "test-model", fake_llm)
-        assert "graph" in tags
-        assert "semantic bridge" in tags
-        assert "nouz" in tags
-
         assert await get_embedding(
             "text",
             enabled=False,
@@ -511,7 +505,6 @@ def test_semantics_helpers_are_directly_usable():
             cache={},
         ) == []
 
-    assert set(clean_tag_result("Tags: #Alpha, beta\nwords: gamma")) == {"alpha", "beta", "gamma"}
     asyncio.run(scenario())
 
 
@@ -738,7 +731,6 @@ def test_process_orphans_use_case_wires_layers(tmp_path):
             parse_frontmatter=parse_frontmatter,
             get_level_from_meta=lambda meta: 5,
             determine_sign=lambda content, meta, db_path, level: asyncio.sleep(0, result={}),
-            extract_tags=lambda content: asyncio.sleep(0, result=[]),
             get_parents_meta=get_parents_meta,
             get_embedding=lambda content: asyncio.sleep(0, result=[]),
             determine_core=lambda content, db_path: asyncio.sleep(0, result={}),
@@ -766,9 +758,6 @@ def test_process_orphans_use_case_wires_layers(tmp_path):
                 "source": "auto",
                 "artifact_sign": "n",
             }
-
-        async def extract_tags(content: str):
-            return ["tag"]
 
         async def get_embedding(text: str):
             assert text == "Body text"
@@ -808,7 +797,6 @@ def test_process_orphans_use_case_wires_layers(tmp_path):
             parse_frontmatter=parse_frontmatter,
             get_level_from_meta=lambda meta: 5,
             determine_sign=determine_sign,
-            extract_tags=extract_tags,
             get_parents_meta=get_parents_meta,
             get_embedding=get_embedding,
             determine_core=determine_core,
@@ -848,7 +836,6 @@ def test_add_entity_use_case_wires_layers(tmp_path):
             core_signs={"S"},
             get_type_by_level=get_type_by_level,
             determine_sign=lambda content, meta, db_path, level: asyncio.sleep(0, result={}),
-            extract_tags=lambda content: asyncio.sleep(0, result=[]),
             get_embedding=lambda content: asyncio.sleep(0, result=[]),
             determine_core=lambda content, db_path: asyncio.sleep(0, result={}),
             list_parent_candidates=lambda db_path, own_path, level: asyncio.sleep(0, result=[]),
@@ -868,9 +855,6 @@ def test_add_entity_use_case_wires_layers(tmp_path):
                 "source": "auto",
                 "artifact_sign": "n",
             }
-
-        async def extract_tags(content: str):
-            return ["tag"]
 
         async def get_embedding(text: str):
             return [1.0, 0.0]
@@ -904,7 +888,6 @@ def test_add_entity_use_case_wires_layers(tmp_path):
             core_signs={"S", "D"},
             get_type_by_level=get_type_by_level,
             determine_sign=determine_sign,
-            extract_tags=extract_tags,
             get_embedding=get_embedding,
             determine_core=determine_core,
             list_parent_candidates=list_parent_candidates,
@@ -920,11 +903,12 @@ def test_add_entity_use_case_wires_layers(tmp_path):
             "sign": "nS",
             "artifact_sign": "n",
             "sign_source": "auto",
-            "tags": ["tag"],
+            "tags": [],
             "hierarchy_parents": ["Parent"],
             "temporary_parents": ["Anchor"],
         }
         assert captured["write"][0] == "created.md"
+        assert "tags" not in captured["write"][2]
         assert captured["write"][2]["parents_meta"] == [
             {"entity": "Parent", "link_type": "hierarchy"},
             {"entity": "Anchor", "link_type": "temporary"},
@@ -1282,10 +1266,6 @@ def test_suggest_metadata_use_case_wires_layers():
     async def scenario():
         calls = {"saved": None}
 
-        async def extract_tags(content: str):
-            assert content == "body"
-            return ["tag"]
-
         async def embedding_is_fresh(db_path: str, path: str):
             return False
 
@@ -1314,10 +1294,6 @@ def test_suggest_metadata_use_case_wires_layers():
             assert (own_path, own_sign, own_vec, own_sign_source) == ("child.md", "D", [1.0, 0.0], "auto")
             return [{"entity": "Bridge", "link_type": "semantic"}]
 
-        async def find_tag_bridges(db_path: str, own_path: str, tags: list[str], own_sign: str):
-            assert tags == ["tag"]
-            return [{"entity": "TagBridge", "link_type": "tag"}]
-
         async def resolve_entity_path(db_path: str, entity: str):
             assert entity == "Parent"
             return "parent.md"
@@ -1343,6 +1319,7 @@ def test_suggest_metadata_use_case_wires_layers():
                 "type": "quant",
                 "level": 4,
                 "sign": "M",
+                "tags": ["tag"],
                 "parents_meta": [{"entity": "Parent", "link_type": "hierarchy"}],
             },
             "db.sqlite",
@@ -1354,7 +1331,6 @@ def test_suggest_metadata_use_case_wires_layers():
             core_signs={"S", "D"},
             get_parents_meta=get_parents_meta,
             determine_type=lambda content, meta: str(meta.get("type", "entity")).strip().lower() or "entity",
-            extract_tags=extract_tags,
             embedding_is_fresh=embedding_is_fresh,
             get_embedding=get_embedding,
             save_embedding=save_embedding,
@@ -1362,7 +1338,6 @@ def test_suggest_metadata_use_case_wires_layers():
             determine_sign=determine_sign,
             get_level_from_meta=lambda meta: int(meta.get("level", 5)),
             find_semantic_bridges=find_semantic_bridges,
-            find_tag_bridges=find_tag_bridges,
             check_hierarchy=lambda entity_type, parents: [{"type": "existing"}],
             resolve_entity_path=resolve_entity_path,
             check_cycle_exists=check_cycle_exists,
@@ -1378,9 +1353,7 @@ def test_suggest_metadata_use_case_wires_layers():
         assert result["semantic_bridges"] == [
             {"entity": "Bridge", "link_type": "semantic", "proposed": True}
         ]
-        assert result["tag_bridges"] == [
-            {"entity": "TagBridge", "link_type": "tag", "proposed": True}
-        ]
+        assert result["tag_bridges"] == []
         assert any(error.get("type") == "cycle_error" for error in result["errors"])
         assert result["core_percentages"] == {"D": 80.0, "S": 20.0}
         assert result["max_cosine"] == 0.9

@@ -2,62 +2,12 @@
 
 import hashlib
 import logging
-import re
-from typing import Awaitable, Callable, List, MutableMapping, Optional
+from typing import List, MutableMapping, Optional
 
 import aiohttp
 
 
 Logger = logging.Logger
-CallLLM = Callable[[str], Awaitable[str]]
-
-
-async def call_llm(prompt: str, api_url: str, model: str, logger: Optional[Logger] = None) -> str:
-    """Call an OpenAI-compatible chat completion endpoint."""
-    try:
-        url = f"{api_url}/chat/completions"
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "max_tokens": 500,
-        }
-        if model:
-            payload["model"] = model
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"].strip()
-    except Exception as exc:
-        if logger:
-            logger.warning(f"LLM unavailable: {exc}")
-        return ""
-
-
-def clean_tag_result(result: str) -> List[str]:
-    """Parse a comma/newline separated LLM keyword response into clean tags."""
-    if not result:
-        return []
-
-    tags = [item.strip().lower().lstrip("#") for item in result.replace("\n", ",").split(",") if item.strip()]
-    clean_tags = []
-    for tag in tags:
-        tag = re.sub(r"^(here|keywords|tags|terms|words).*?:", "", tag).strip().lstrip("#")
-        if tag and 2 < len(tag) < 50:
-            clean_tags.append(tag)
-    return list(set(clean_tags))[:5]
-
-
-async def extract_tags(content: str, llm_model: str, call_llm_func: CallLLM) -> List[str]:
-    """Extract 3-5 tags from content through a provided LLM caller."""
-    if not content or not llm_model:
-        return []
-    prompt = (
-        "Extract 3-5 keywords from this text. Return them as a comma-separated list "
-        f"without hashtags or numbers.\n\nText: {content[:2000]}"
-    )
-    result = await call_llm_func(prompt)
-    return clean_tag_result(result)
 
 
 async def get_embedding(

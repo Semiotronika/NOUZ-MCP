@@ -23,7 +23,7 @@ NOUZ sits between your note base and your AI agent. It helps turn scattered Mark
 2. **Connection Discovery Between Notes**
    The server builds a directed graph (DAG) and proposes links that can be reviewed before they are written:
    - *Semantic bridges:* two notes from different domains point to the same idea.
-   - *Tag bridges:* notes share hidden concepts at the tag level.
+   - Explicit `tag` links can be stored manually in `parents_meta`, but NOUZ does not generate tags or automatic tag-based links.
 
 3. **Base Evolution Tracking (Drift)**  
    NOUZ aggregates data bottom-up. If a module started in one domain while new notes gradually pull it into another, the server shows the divergence (`core_drift`).
@@ -39,7 +39,7 @@ Depending on your needs, NOUZ works in three modes: from a simple graph (**LUCA*
 3. Each new note is projected onto these axes. Sign is determined by content, or by you.
 4. L4 gets a domain profile from text classification, while L3/L2 aggregate `core_mix` from child nodes. If a module's `sign` diverges from `core_mix`, the server reports `core_drift`.
 
-**Two bridge types** find connections between notes from different domains: semantic (texts are close) and tag-based (concepts overlap).
+**Semantic bridges** find connections between notes from different domains when texts are close in meaning. Tags remain explicit user metadata.
 
 ---
 
@@ -113,7 +113,7 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 | `get_children` | Traverse down the graph |
 | `get_parents` | Traverse up the graph |
 | `suggest_parents` | Find parents for an orphan |
-| `add_entity` | Create an entity in one step (auto sign, tags, parents) |
+| `add_entity` | Create an entity in one step (auto sign/parents, explicit tags only) |
 | `process_orphans` | Auto-fill files without markup |
 
 Set `NOUZ_READ_ONLY=true` to hide and block mutating tools (`write_file`,

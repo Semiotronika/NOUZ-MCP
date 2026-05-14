@@ -37,7 +37,7 @@ Target modules:
 - `modes.py`: LUCA/PRIZMA/SLOI mode policy helpers;
 - `links.py`: parent-link normalization and parent existence checks;
 - `signs.py`: sign parsing and artifact-sign heuristics;
-- `semantics.py`: LLM tag extraction and embedding client calls;
+- `semantics.py`: embedding client calls;
 - `sqlite_store.py`: SQLite schema, migrations, and simple graph-link reads.
 - `use_cases.py`: application workflows that compose IO, store, semantics, and policy.
 
@@ -70,7 +70,7 @@ nouz_mcp/
   semantics/
     embeddings.py        # embedding providers and cache
     etalons.py           # reference vectors
-    bridges.py           # semantic/tag bridges
+    bridges.py           # semantic bridges
     vectors.py           # vector math
 ```
 
@@ -103,7 +103,7 @@ needs clear layers first, not a large abstraction system.
 ### Why semantic helpers stay in `server.py` for now
 
 The remaining intentionally-not-extracted helpers in `server.py` are the
-semantic-service surface: `_find_semantic_bridges`, `_find_tag_bridges`,
+semantic-service surface: `_find_semantic_bridges`,
 `_determine_core_by_embedding`, `_calibrate_reference_vectors`,
 `_determine_sign_smart`, and `_find_temporary_anchor`. They read several
 module-level globals (`RULE`, `CORE_SIGNS`, `CONFIG`, thresholds, `_get_embedding`).
@@ -131,7 +131,7 @@ Graph Store
   SQLite tables, migrations, file index, parent/child links, embeddings cache.
 
 Semantics
-  embeddings, etalons, cosine/mean-centering, semantic bridges, tag bridges, core_mix.
+  embeddings, etalons, cosine/mean-centering, semantic bridges, core_mix.
 
 Config / Policy
   config files, profiles, thresholds, mode flags, artifact keyword rules.
@@ -200,7 +200,7 @@ Critical behaviors that must stay stable:
 - `add_entity` creates the same result shape after moving creation logic to use cases;
 - L1 core signs are not overwritten by `recalc_signs`;
 - L4 signs stay separate from child artifact signs;
-- `suggest_metadata` keeps semantic/tag bridges, cycle errors, and drift warnings stable;
+- `suggest_metadata` keeps semantic bridges, cycle errors, and drift warnings stable;
 - `process_orphans` respects dry-run/limit behavior.
 
 ## Refactor Rules
@@ -225,11 +225,11 @@ Critical behaviors that must stay stable:
 - Extracted config defaults, profile application, and config file loading into `nouz_mcp/config.py`.
 - Extracted parent-link normalization and parent existence checks into `nouz_mcp/links.py`.
 - Extracted sign parsing and artifact-sign heuristics into `nouz_mcp/signs.py`.
-- Extracted LLM tag extraction and embedding client calls into `nouz_mcp/semantics.py`.
+- Extracted embedding client calls into `nouz_mcp/semantics.py`.
 - Extracted Markdown vault reads into `nouz_mcp/vault_io.py`.
 - Extracted application workflows `read_file`, `write_file`, `update_metadata`, `index_all_files`, `list_files`, `suggest_parents`, `suggest_metadata`, `process_orphans`, `add_entity`, `recalc_signs`, and `recalc_core_mix` into `nouz_mcp/use_cases.py`.
 - Extracted plain text file reads/writes into `nouz_mcp/vault_io.py`.
-- Extracted SQLite schema/migration, file indexing, core_mix aggregation/loading, basic graph-link reads, orphaned-link lookup, parent-candidate queries, embedding freshness/storage/loading, reference-vector storage, entity-path lookup, semantic-bridge candidate rows, tag-bridge candidate rows, and temporary-anchor candidate rows into `nouz_mcp/sqlite_store.py`.
+- Extracted SQLite schema/migration, file indexing, core_mix aggregation/loading, basic graph-link reads, orphaned-link lookup, parent-candidate queries, embedding freshness/storage/loading, reference-vector storage, entity-path lookup, semantic-bridge candidate rows, and temporary-anchor candidate rows into `nouz_mcp/sqlite_store.py`.
 - Removed direct SQLite usage from `nouz_mcp/server.py`; MCP/server code now calls store helpers instead of issuing SQL.
 - Removed old private compatibility aliases from `nouz_mcp/server.py` such as helper wrappers for
   paths, Markdown parsing/dumping, vector math, serialization, graph reads, embedding storage,
@@ -245,7 +245,7 @@ Critical behaviors that must stay stable:
 ## Remaining Refactor Targets (post-3.1.0)
 
 - Extract the semantic-service surface (`_determine_core_by_embedding`,
-  `_find_semantic_bridges`, `_find_tag_bridges`, `_calibrate_reference_vectors`,
+  `_find_semantic_bridges`, `_calibrate_reference_vectors`,
   `_determine_sign_smart`, `_find_temporary_anchor`) into a `SemanticService`
   module that takes config, rule, and embedder by constructor injection rather
   than reading module-level globals.

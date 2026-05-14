@@ -35,11 +35,9 @@ DumpMetadata = Callable[[Dict[str, Any]], str]
 CheckParentsExist = Callable[[Dict[str, Any]], List[str]]
 GetParentsMeta = Callable[[Dict[str, Any]], List[Dict[str, Any]]]
 DetermineType = Callable[[str, Dict[str, Any]], str]
-ExtractTags = Callable[[str], Awaitable[List[str]]]
 GetLevelFromMeta = Callable[[Dict[str, Any]], int]
 DetermineSign = Callable[[str, Dict[str, Any], str, int], Awaitable[Dict[str, Any]]]
 FindSemanticBridges = Callable[[str, str, str, List[float], str], Awaitable[List[Dict[str, Any]]]]
-FindTagBridges = Callable[[str, str, List[str], str], Awaitable[List[Dict[str, Any]]]]
 CheckHierarchy = Callable[[str, List[Dict[str, Any]]], List[Dict[str, Any]]]
 ResolveEntityPath = Callable[[str, str], Awaitable[Optional[str]]]
 CheckCycleExists = Callable[[str, str, str], Awaitable[bool]]
@@ -52,6 +50,16 @@ UpdateCoreMixes = Callable[[str, List[tuple[str, str]]], Awaitable[None]]
 DetermineArtifactSign = Callable[[str, Dict[str, Any]], str]
 ReadArtifactSign = Callable[[str], str]
 UpdateSignRecalcRows = Callable[[str, List[tuple[str, str, str, str, str]], List[tuple[str, str]]], Awaitable[None]]
+
+
+def _explicit_tag_list(meta: Dict[str, Any]) -> List[str]:
+    """Return only tags explicitly present in metadata."""
+    raw = meta.get("tags", [])
+    if raw in (None, "", "None"):
+        return []
+    if isinstance(raw, list):
+        return [str(tag).strip() for tag in raw if str(tag).strip()]
+    return [str(raw).strip()] if str(raw).strip() else []
 
 
 async def index_all_files(
@@ -460,7 +468,6 @@ async def suggest_metadata(
     core_signs: set[str],
     get_parents_meta: GetParentsMeta,
     determine_type: DetermineType,
-    extract_tags: ExtractTags,
     embedding_is_fresh: EmbeddingIsFresh,
     get_embedding: GetEmbedding,
     save_embedding: SaveEmbedding,
@@ -468,7 +475,6 @@ async def suggest_metadata(
     determine_sign: DetermineSign,
     get_level_from_meta: GetLevelFromMeta,
     find_semantic_bridges: FindSemanticBridges,
-    find_tag_bridges: FindTagBridges,
     check_hierarchy: CheckHierarchy,
     resolve_entity_path: ResolveEntityPath,
     check_cycle_exists: CheckCycleExists,
@@ -483,12 +489,9 @@ async def suggest_metadata(
     type_ = determine_type(content, meta)
     parents_obj = get_parents_meta(meta)
 
-    tags = meta.get("tags", [])
-    if not tags and content:
-        tags = await extract_tags(content)
+    tags = _explicit_tag_list(meta)
 
     semantic_bridges = []
-    tag_bridges = []
     vec = []
     if file_path and reference_vectors:
         if not await embedding_is_fresh(db_path, file_path):
@@ -508,8 +511,6 @@ async def suggest_metadata(
         semantic_bridges = await find_semantic_bridges(
             db_path, str(file_path), actual_sign, vec, sign_source
         )
-        if tags:
-            tag_bridges = await find_tag_bridges(db_path, str(file_path), tags, actual_sign)
 
     errors = check_hierarchy(type_, parents_obj)
 
@@ -543,9 +544,7 @@ async def suggest_metadata(
         "semantic_bridges": [
             {**bridge, "proposed": True} for bridge in semantic_bridges
         ],
-        "tag_bridges": [
-            {**bridge, "proposed": True} for bridge in tag_bridges
-        ],
+        "tag_bridges": [],
     }
 
     if content and reference_vectors:
@@ -769,7 +768,6 @@ async def process_orphans(
     parse_frontmatter: ParseFrontmatter,
     get_level_from_meta: GetLevelFromMeta,
     determine_sign: DetermineSign,
-    extract_tags: ExtractTags,
     get_parents_meta: GetParentsMeta,
     get_embedding: GetEmbedding,
     determine_core: DetermineCore,
@@ -831,9 +829,7 @@ async def process_orphans(
                 "artifact_sign": frontmatter.get("artifact_sign", ""),
             }
 
-        tags = frontmatter.get("tags", [])
-        if not tags and content:
-            tags = await extract_tags(content)
+        tags = _explicit_tag_list(frontmatter)
 
         parents_meta = get_parents_meta(frontmatter)
         parents_auto = False
@@ -878,9 +874,10 @@ async def process_orphans(
                 **frontmatter,
                 "level": level,
                 "sign": sign_result["actual_sign"],
-                "tags": tags,
                 "parents_meta": parents_meta,
             }
+            if tags or "tags" in frontmatter:
+                metadata["tags"] = tags
             if sign_result.get("artifact_sign"):
                 metadata["artifact_sign"] = sign_result["artifact_sign"]
             success, error = await write_file(path, content, metadata, db_path)
@@ -912,7 +909,6 @@ async def add_entity(
     core_signs: set[str],
     get_type_by_level: GetTypeByLevel,
     determine_sign: DetermineSign,
-    extract_tags: ExtractTags,
     get_embedding: GetEmbedding,
     determine_core: DetermineCore,
     list_parent_candidates: ListParentEmbeddingCandidates,
@@ -920,7 +916,7 @@ async def add_entity(
     cosine: Cosine,
     write_file: WriteFileWithMetadata,
 ) -> Dict[str, Any]:
-    """Create one entity file with suggested sign, tags, and optional parent links."""
+    """Create one entity file with suggested sign and optional parent links."""
     if not has_sign_auto:
         return {"error": "Not available in luca mode. Use write_file instead."}
 
@@ -940,10 +936,9 @@ async def add_entity(
     if sign_result.get("artifact_sign"):
         metadata["artifact_sign"] = sign_result["artifact_sign"]
 
-    tags = explicit_tags
-    if not tags and content:
-        tags = await extract_tags(content)
-    metadata["tags"] = tags
+    tags = [str(tag).strip() for tag in explicit_tags if str(tag).strip()]
+    if tags:
+        metadata["tags"] = tags
 
     if explicit_parents:
         metadata["parents_meta"] = explicit_parents
