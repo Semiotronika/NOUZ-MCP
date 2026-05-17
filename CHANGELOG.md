@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.2.2 - released 2026-05-17
+
+### Changed
+
+- `search_chunks` now supports `score_mode=auto/raw/centered`. Unscoped large
+  searches default to mean-centered cosine scoring to reduce anisotropic
+  embedding background, while scoped `path` searches keep raw cosine by default.
+- `search_chunks` returns diagnostic scoring metadata: active `score`,
+  `score_raw`, `score_centered`, `score_mode`, `candidate_count`,
+  `centroid_norm`, and `score_gap`.
+
+### Added
+
+- Added `scripts/benchmark_chunk_scoring.py`, an anonymized raw-vs-centered
+  benchmark that reports aggregate retrieval geometry without note paths,
+  headings, titles, or note text.
+
+### Verification
+
+- `python -m pytest -q`
+- `python test_server.py`
+- `python -m py_compile scripts\benchmark_chunk_scoring.py`
+- `python -m build --sdist --wheel`
+- `python -m twine check dist/*`
+
 ## 3.2.1 - released 2026-05-14
 
 ### Fixed

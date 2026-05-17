@@ -82,7 +82,7 @@ from nouz_mcp.vectors import cosine, mean_center  # noqa: E402
 
 
 def test_package_server_exposes_server_api():
-    assert __version__ == "3.2.1"
+    assert __version__ == "3.2.2"
     assert server.VERSION == __version__
     assert callable(server.run_server)
     assert callable(server.main)
@@ -1320,6 +1320,89 @@ def test_search_chunk_embeddings_use_case_ranks_stored_chunks():
             cosine=cosine,
         )
         assert empty == {"error": "Empty query.", "matches": []}
+
+    asyncio.run(scenario())
+
+
+def test_search_chunk_embeddings_use_case_centers_large_candidate_sets():
+    async def scenario():
+        async def get_embedding(text: str):
+            assert text == "needle"
+            return [1.0, 0.0]
+
+        rows = []
+        for idx in range(50):
+            rows.append(
+                {
+                    "chunk_id": f"chunk:{idx}",
+                    "path": "note.md",
+                    "index": idx,
+                    "embedding": json.dumps([1.0, 0.0] if idx == 0 else [0.0, 1.0]),
+                }
+            )
+
+        async def list_chunk_embeddings(db_path: str, path: str):
+            return rows
+
+        result = await search_chunk_embeddings_use_case(
+            "needle",
+            "db.sqlite",
+            top_k=1,
+            embed_max_chars=20,
+            get_embedding=get_embedding,
+            list_chunk_embeddings=list_chunk_embeddings,
+            cosine=cosine,
+        )
+
+        assert result["score_mode_requested"] == "auto"
+        assert result["score_mode"] == "centered"
+        assert result["candidate_count"] == 50
+        assert result["matches"][0]["chunk_id"] == "chunk:0"
+        assert result["matches"][0]["score"] == result["matches"][0]["score_centered"]
+        assert result["matches"][0]["score_raw"] == 1.0
+
+        raw = await search_chunk_embeddings_use_case(
+            "needle",
+            "db.sqlite",
+            top_k=1,
+            score_mode="raw",
+            embed_max_chars=20,
+            get_embedding=get_embedding,
+            list_chunk_embeddings=list_chunk_embeddings,
+            cosine=cosine,
+        )
+
+        assert raw["score_mode"] == "raw"
+        assert raw["matches"][0]["score"] == raw["matches"][0]["score_raw"]
+
+        scoped_auto = await search_chunk_embeddings_use_case(
+            "needle",
+            "db.sqlite",
+            top_k=1,
+            path="note.md",
+            embed_max_chars=20,
+            get_embedding=get_embedding,
+            list_chunk_embeddings=list_chunk_embeddings,
+            cosine=cosine,
+        )
+
+        assert scoped_auto["score_mode"] == "raw"
+        assert scoped_auto["matches"][0]["score_centered"] is None
+
+        scoped_forced = await search_chunk_embeddings_use_case(
+            "needle",
+            "db.sqlite",
+            top_k=1,
+            path="note.md",
+            score_mode="centered",
+            embed_max_chars=20,
+            get_embedding=get_embedding,
+            list_chunk_embeddings=list_chunk_embeddings,
+            cosine=cosine,
+        )
+
+        assert scoped_forced["score_mode"] == "centered"
+        assert scoped_forced["matches"][0]["score_centered"] is not None
 
     asyncio.run(scenario())
 

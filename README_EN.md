@@ -108,7 +108,7 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 | `embed` | Get a vector for text |
 | `chunk_text` | Split Markdown text into deterministic retrieval chunks |
 | `chunk_file` | Split one note body into deterministic retrieval chunks |
-| `search_chunks` | Search stored chunk embeddings |
+| `search_chunks` | Search stored chunk embeddings; defaults to mean-centered scoring for unscoped large searches |
 | `list_files` | List with filters by level, sign |
 | `get_children` | Traverse down the graph |
 | `get_parents` | Traverse up the graph |
@@ -128,7 +128,12 @@ if you want cache writes in read-only mode.
 chunk text coordinates (`start_char`/`end_char`), body coordinates without
 overlap (`body_start_char`/`body_end_char`), and hash fields. `index_all` with
 `with_embeddings=true` stores these chunks in the SQLite `chunk_embeddings`
-table, and `search_chunks` ranks them by cosine similarity to the query.
+table, and `search_chunks` ranks them by semantic score. In `score_mode=auto`,
+large unscoped candidate sets use mean-centered cosine to reduce the
+anisotropic common background of the embedding space. Each match returns the
+active `score` plus diagnostic `score_raw` and `score_centered` values. Scoped
+search within `path` keeps raw ranking by default; use `score_mode=raw` for
+legacy cosine behavior or `score_mode=centered` to force mean-centered scoring.
 
 `parents_meta.link_type` supports manual `hierarchy`, `semantic`, `temporary`,
 `tag`, `analogy`, and `error` links. NOUZ does not auto-generate analogy links.

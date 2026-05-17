@@ -108,7 +108,7 @@ OBSIDIAN_ROOT=./vault python server.py
 | `embed` | Получить вектор для текста |
 | `chunk_text` | Разрезать Markdown-текст на стабильные retrieval-чанки |
 | `chunk_file` | Разрезать тело одной заметки на стабильные retrieval-чанки |
-| `search_chunks` | Искать по сохранённым chunk embeddings |
+| `search_chunks` | Искать по сохранённым chunk embeddings; по умолчанию снижает cosine-bias через mean-centered scoring |
 | `list_files` | Список с фильтрами по уровню, знаку |
 | `get_children` | Пройти вниз по графу |
 | `get_parents` | Пройти вверх по графу |
@@ -128,7 +128,12 @@ OBSIDIAN_ROOT=./vault python server.py
 координаты фактического текста чанка (`start_char`/`end_char`), координаты тела
 без overlap (`body_start_char`/`body_end_char`) и hash-поля. `index_all` с
 `with_embeddings=true` сохраняет эти чанки в SQLite-таблицу `chunk_embeddings`,
-а `search_chunks` ранжирует их по cosine similarity к запросу.
+а `search_chunks` ранжирует их по semantic score к запросу. В режиме
+`score_mode=auto` большие неприцельные наборы кандидатов ранжируются по mean-centered cosine,
+чтобы снизить анизотропный общий фон embedding-пространства. Для диагностики
+каждый match возвращает активный `score`, а также `score_raw` и
+`score_centered`; поиск внутри `path` по умолчанию сохраняет raw-ранжирование,
+а `score_mode=raw` сохраняет legacy cosine-поведение.
 
 `parents_meta.link_type` поддерживает ручные связи `hierarchy`, `semantic`,
 `temporary`, `tag`, `analogy` и `error`. NOUZ не генерирует аналогии

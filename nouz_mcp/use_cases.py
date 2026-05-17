@@ -55,6 +55,8 @@ DetermineArtifactSign = Callable[[str, Dict[str, Any]], str]
 ReadArtifactSign = Callable[[str], str]
 UpdateSignRecalcRows = Callable[[str, List[tuple[str, str, str, str, str]], List[tuple[str, str]]], Awaitable[None]]
 INLINE_TAG_RE = re.compile(r"(?<![\w])#([^\s#.,;:!?()[\]{}<>`'\"|]+)")
+CENTERED_CHUNK_SCORE_MIN_CANDIDATES = 50
+CHUNK_SCORE_MODES = {"auto", "raw", "centered"}
 
 
 async def index_all_files(
@@ -155,28 +157,65 @@ async def search_chunk_embeddings(
     *,
     top_k: int = 8,
     path: str = "",
+    score_mode: str = "auto",
     embed_max_chars: int,
     get_embedding: GetEmbedding,
     list_chunk_embeddings: ListChunkEmbeddings,
     cosine: Cosine,
 ) -> Dict[str, Any]:
-    """Rank stored chunk embeddings by semantic similarity to a query."""
+    """Rank stored chunk embeddings by semantic similarity to a query.
+
+    Raw cosine remains available, but unscoped global searches default to
+    mean-centered scoring once there are enough candidate chunks. This reduces
+    the common embedding-space direction that makes many unrelated chunks look
+    similarly close in anisotropic models.
+    """
     normalized_query = query.strip()
     limit = max(1, min(int(top_k), 50))
     if not normalized_query:
         return {"error": "Empty query.", "matches": []}
 
+    requested_score_mode = str(score_mode or "auto").strip().lower()
+    if requested_score_mode not in CHUNK_SCORE_MODES:
+        return {"error": "Invalid score_mode. Use auto, raw, or centered.", "matches": []}
+
     query_vec = await get_embedding(normalized_query[:embed_max_chars])
     if not query_vec:
         return {"error": "Embeddings unavailable.", "matches": []}
 
-    matches = []
+    candidates = []
     for chunk in await list_chunk_embeddings(db_path, path):
         try:
             chunk_vec = json.loads(str(chunk.get("embedding") or ""))
         except Exception:
             continue
-        score = cosine(query_vec, chunk_vec)
+        if not isinstance(chunk_vec, list) or len(chunk_vec) != len(query_vec):
+            continue
+        candidates.append((chunk, chunk_vec))
+
+    candidate_count = len(candidates)
+    use_centered = requested_score_mode == "centered" or (
+        requested_score_mode == "auto"
+        and not path
+        and candidate_count >= CENTERED_CHUNK_SCORE_MIN_CANDIDATES
+    )
+    if use_centered and candidate_count < 2:
+        use_centered = False
+
+    centroid = _vector_centroid([vec for _, vec in candidates]) if use_centered else []
+    query_centered = _subtract_vector(query_vec, centroid) if use_centered else []
+    active_score_mode = "centered" if use_centered else "raw"
+    centroid_norm = _vector_norm(centroid) if use_centered else 0.0
+
+    matches = []
+    for chunk, chunk_vec in candidates:
+        score_raw = cosine(query_vec, chunk_vec)
+        score_centered = (
+            cosine(query_centered, _subtract_vector(chunk_vec, centroid))
+            if use_centered
+            else None
+        )
+        score = score_centered if use_centered and score_centered is not None else score_raw
         matches.append(
             {
                 "chunk_id": chunk.get("chunk_id", ""),
@@ -191,12 +230,51 @@ async def search_chunk_embeddings(
                 "body_hash": chunk.get("body_hash", ""),
                 "text_hash": chunk.get("text_hash", ""),
                 "score": round(score, 4),
+                "score_raw": round(score_raw, 4),
+                "score_centered": round(score_centered, 4) if score_centered is not None else None,
                 "text": chunk.get("text", ""),
             }
         )
 
     matches.sort(key=lambda item: -item["score"])
-    return {"query": normalized_query, "top_k": limit, "matches": matches[:limit]}
+    returned = matches[:limit]
+    score_gap = (
+        round(returned[0]["score"] - returned[-1]["score"], 4)
+        if len(returned) >= 2
+        else 0.0
+    )
+    return {
+        "query": normalized_query,
+        "top_k": limit,
+        "score_mode_requested": requested_score_mode,
+        "score_mode": active_score_mode,
+        "candidate_count": candidate_count,
+        "centroid_norm": round(centroid_norm, 4),
+        "score_gap": score_gap,
+        "matches": returned,
+    }
+
+
+def _vector_centroid(vectors: List[List[float]]) -> List[float]:
+    if not vectors:
+        return []
+    dim = len(vectors[0])
+    centroid = [0.0] * dim
+    for vec in vectors:
+        for idx, value in enumerate(vec):
+            centroid[idx] += float(value)
+    count = float(len(vectors))
+    return [value / count for value in centroid]
+
+
+def _subtract_vector(vec: List[float], centroid: List[float]) -> List[float]:
+    if not centroid or len(vec) != len(centroid):
+        return vec
+    return [float(value) - centroid[idx] for idx, value in enumerate(vec)]
+
+
+def _vector_norm(vec: List[float]) -> float:
+    return sum(float(value) * float(value) for value in vec) ** 0.5
 
 
 async def suggest_tag_bridges(

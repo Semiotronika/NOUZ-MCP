@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz -- Unified MCP Server for Obsidian. v3.2.1
+Nouz -- Unified MCP Server for Obsidian. v3.2.2
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -879,6 +879,7 @@ async def _search_chunks(
     *,
     top_k: int = 8,
     path: str = "",
+    score_mode: str = "auto",
 ) -> Dict[str, Any]:
     store_path = ""
     if path:
@@ -892,6 +893,7 @@ async def _search_chunks(
         db_path,
         top_k=top_k,
         path=store_path,
+        score_mode=score_mode,
         embed_max_chars=EMBED_MAX_CHARS,
         get_embedding=_get_embedding,
         list_chunk_embeddings=store_list_chunk_embeddings,
@@ -1119,6 +1121,8 @@ async def run_server():
             types.Tool(
                 name="search_chunks",
                 description="Search stored chunk embeddings by semantic similarity. Read-only: it does not index or write anything. "
+                            "By default, NOUZ uses mean-centered scoring on unscoped large candidate sets to reduce anisotropic cosine bias, "
+                            "while returning raw and centered scores for inspection. "
                             "Run index_all with with_embeddings=true first to populate the SQLite chunk_embedding index.",
                 inputSchema={
                     "type": "object",
@@ -1126,6 +1130,11 @@ async def run_server():
                         "query": {"type": "string", "description": "Search query to embed and match against chunk embeddings"},
                         "top_k": {"type": "integer", "description": "Maximum matches to return, 1-50. Default 8."},
                         "path": {"type": "string", "description": "Optional relative note path to search within one file"},
+                        "score_mode": {
+                            "type": "string",
+                            "description": "Scoring mode: auto uses centered scoring for unscoped large candidate sets, raw preserves legacy cosine, centered forces mean-centered cosine when possible.",
+                            "enum": ["auto", "raw", "centered"],
+                        },
                     },
                     "required": ["query"]
                 }
@@ -1415,6 +1424,7 @@ async def run_server():
                     args.get("query", ""),
                     top_k=int(args.get("top_k", 8)),
                     path=args.get("path", ""),
+                    score_mode=args.get("score_mode", "auto"),
                 )
                 return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
