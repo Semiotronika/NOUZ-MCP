@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.2.3 - released 2026-05-18
+
+### Changed
+
+- `semantic_bridges` now use stored chunk embeddings as concrete evidence when
+  both notes have indexed chunks. Note-level cosine still finds candidates, but
+  candidates with chunk data must pass the best chunk-pair score before they are
+  proposed.
+- Semantic bridge responses now include `note_score`, `chunk_score`,
+  `chunk_score_raw`, `chunk_score_centered`, `chunk_score_mode`, and an
+  `evidence` block with snippets/spans for both notes. If chunks are not yet
+  indexed, NOUZ keeps the previous note-level fallback and marks
+  `evidence_status: chunk_embeddings_unavailable`.
+
 ## 3.2.2 - released 2026-05-17
 
 ### Changed

@@ -73,6 +73,7 @@ DEFAULT_CONFIG = {
         "confident_spread": 60.0,
         "pattern_second_sign_threshold": 30.0,
         "semantic_bridge_threshold": 0.55,
+        "semantic_bridge_chunk_threshold": 0.55,
         "parent_link_threshold": 0.55
     }
 }

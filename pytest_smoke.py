@@ -82,7 +82,7 @@ from nouz_mcp.vectors import cosine, mean_center  # noqa: E402
 
 
 def test_package_server_exposes_server_api():
-    assert __version__ == "3.2.2"
+    assert __version__ == "3.2.3"
     assert server.VERSION == __version__
     assert callable(server.run_server)
     assert callable(server.main)
@@ -360,6 +360,7 @@ def test_current_config_contract_is_stable():
         "artifact": 5,
     }
     assert server.DEFAULT_CONFIG["thresholds"]["semantic_bridge_threshold"] == 0.55
+    assert server.DEFAULT_CONFIG["thresholds"]["semantic_bridge_chunk_threshold"] == 0.55
     assert server.DEFAULT_ARTIFACT_SIGNS[0] == {
         "sign": "n",
         "name": "Note",
@@ -1403,6 +1404,91 @@ def test_search_chunk_embeddings_use_case_centers_large_candidate_sets():
 
         assert scoped_forced["score_mode"] == "centered"
         assert scoped_forced["matches"][0]["score_centered"] is not None
+
+    asyncio.run(scenario())
+
+
+def test_semantic_bridges_use_chunk_evidence_when_available():
+    async def scenario():
+        original_rows = server.list_semantic_bridge_rows
+        original_chunks = server.store_list_chunk_embeddings
+        original_note_threshold = server.SEMANTIC_BRIDGE_THRESHOLD
+        original_chunk_threshold = getattr(server, "SEMANTIC_BRIDGE_CHUNK_THRESHOLD", None)
+        original_semantic_rule = server.RULE.get("semantic_bridges", False)
+
+        def chunk(path: str, index: int, vec: list[float], text: str):
+            return {
+                "chunk_id": f"chunk:{path}:{index}",
+                "chunker_version": 1,
+                "path": path,
+                "index": index,
+                "start_char": index * 10,
+                "end_char": index * 10 + len(text),
+                "body_start_char": index * 10,
+                "body_end_char": index * 10 + len(text),
+                "heading": "Evidence",
+                "body_hash": f"body-{path}-{index}",
+                "text_hash": f"text-{path}-{index}",
+                "text": text,
+                "embedding": json.dumps(vec),
+            }
+
+        chunks_by_path = {
+            "own.md": [chunk("own.md", 0, [1.0, 0.0], "shared bridge evidence")],
+            "other.md": [chunk("other.md", 0, [0.98, 0.02], "matching bridge evidence")],
+            "weak.md": [chunk("weak.md", 0, [0.0, 1.0], "different local evidence")],
+        }
+        for index in range(50):
+            path = f"background-{index}.md"
+            chunks_by_path[path] = [chunk(path, 0, [0.0, 1.0], "background")]
+        core_a, core_b = sorted(server.CORE_SIGNS)[:2] if len(server.CORE_SIGNS) >= 2 else ("S", "D")
+
+        async def list_semantic_bridge_rows(db_path: str):
+            assert db_path == "db.sqlite"
+            return [
+                ("other.md", core_b, "auto", "", json.dumps([0.98, 0.02])),
+                ("weak.md", core_b, "auto", "", json.dumps([0.96, 0.04])),
+            ]
+
+        async def list_chunk_embeddings(db_path: str, path: str = ""):
+            assert db_path == "db.sqlite"
+            if path:
+                return chunks_by_path.get(path, [])
+            return [item for chunks in chunks_by_path.values() for item in chunks]
+
+        try:
+            server.list_semantic_bridge_rows = list_semantic_bridge_rows
+            server.store_list_chunk_embeddings = list_chunk_embeddings
+            server.SEMANTIC_BRIDGE_THRESHOLD = 0.5
+            server.SEMANTIC_BRIDGE_CHUNK_THRESHOLD = 0.5
+            server.RULE["semantic_bridges"] = True
+
+            bridges = await server._find_semantic_bridges(
+                "db.sqlite", "own.md", core_a, [1.0, 0.0], "auto"
+            )
+
+            assert [bridge["entity"] for bridge in bridges] == ["other"]
+            bridge = bridges[0]
+            assert bridge["link_type"] == "semantic"
+            assert bridge["strength"] >= 0.5
+            assert bridge["note_score"] >= 0.5
+            assert bridge["chunk_score"] >= 0.5
+            assert bridge["chunk_score_mode"] == "centered"
+            assert bridge["evidence"]["own"]["chunk_id"] == "chunk:own.md:0"
+            assert bridge["evidence"]["other"]["chunk_id"] == "chunk:other.md:0"
+            assert "chunk_centered" in bridge["reason"]
+        finally:
+            server.list_semantic_bridge_rows = original_rows
+            server.store_list_chunk_embeddings = original_chunks
+            server.SEMANTIC_BRIDGE_THRESHOLD = original_note_threshold
+            server.RULE["semantic_bridges"] = original_semantic_rule
+            if original_chunk_threshold is None:
+                try:
+                    delattr(server, "SEMANTIC_BRIDGE_CHUNK_THRESHOLD")
+                except AttributeError:
+                    pass
+            else:
+                server.SEMANTIC_BRIDGE_CHUNK_THRESHOLD = original_chunk_threshold
 
     asyncio.run(scenario())
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz -- Unified MCP Server for Obsidian. v3.2.2
+Nouz -- Unified MCP Server for Obsidian. v3.2.3
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -188,6 +188,8 @@ def _is_meta_root(file_path) -> bool:
 
 PATTERN_SECOND_SIGN_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("pattern_second_sign_threshold", 30.0))
 SEMANTIC_BRIDGE_THRESHOLD = CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("semantic_bridge_threshold", 0.55)
+SEMANTIC_BRIDGE_CHUNK_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("semantic_bridge_chunk_threshold", SEMANTIC_BRIDGE_THRESHOLD))
+SEMANTIC_BRIDGE_CENTERED_MIN_CHUNKS = 50
 PARENT_LINK_THRESHOLD = float(CONFIG.get("thresholds", DEFAULT_CONFIG["thresholds"]).get("parent_link_threshold", 0.55))
 
 # ============================================================================
@@ -379,6 +381,89 @@ async def _aggregate_core_mix(db_path: str, parent_path: str, child_level: Optio
 def _signs_share_core(sign_a: str, sign_b: str) -> bool:
     return signs_share_core(sign_a, sign_b, CORE_SIGNS)
 
+
+def _chunk_vector(chunk: Dict[str, Any]) -> Optional[List[float]]:
+    try:
+        vector = json.loads(str(chunk.get("embedding") or ""))
+    except Exception:
+        return None
+    if not isinstance(vector, list):
+        return None
+    try:
+        return [float(value) for value in vector]
+    except (TypeError, ValueError):
+        return None
+
+
+def _vector_centroid(vectors: List[List[float]]) -> List[float]:
+    if not vectors:
+        return []
+    dim = len(vectors[0])
+    centroid = [0.0] * dim
+    count = 0
+    for vector in vectors:
+        if len(vector) != dim:
+            continue
+        count += 1
+        for idx, value in enumerate(vector):
+            centroid[idx] += value
+    if not count:
+        return []
+    return [value / count for value in centroid]
+
+
+def _subtract_vector(vector: List[float], centroid: List[float]) -> List[float]:
+    if not centroid or len(vector) != len(centroid):
+        return vector
+    return [value - centroid[idx] for idx, value in enumerate(vector)]
+
+
+def _chunk_evidence(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    text = " ".join(str(chunk.get("text", "")).split())
+    return {
+        "chunk_id": chunk.get("chunk_id", ""),
+        "path": chunk.get("path", ""),
+        "index": chunk.get("index"),
+        "heading": chunk.get("heading", ""),
+        "start_char": chunk.get("start_char"),
+        "end_char": chunk.get("end_char"),
+        "snippet": text[:240],
+    }
+
+
+def _best_chunk_bridge_evidence(
+    own_chunks: List[Dict[str, Any]],
+    other_chunks: List[Dict[str, Any]],
+    centroid: List[float],
+) -> Optional[Dict[str, Any]]:
+    best: Optional[Dict[str, Any]] = None
+    for own_chunk in own_chunks:
+        own_vec = own_chunk.get("_vector")
+        if not isinstance(own_vec, list):
+            continue
+        for other_chunk in other_chunks:
+            other_vec = other_chunk.get("_vector")
+            if not isinstance(other_vec, list) or len(other_vec) != len(own_vec):
+                continue
+            score_raw = cosine(own_vec, other_vec)
+            score_centered = (
+                cosine(_subtract_vector(own_vec, centroid), _subtract_vector(other_vec, centroid))
+                if centroid and len(centroid) == len(own_vec)
+                else None
+            )
+            active_score = score_centered if score_centered is not None else score_raw
+            if best is None or active_score > best["score"]:
+                best = {
+                    "score": active_score,
+                    "score_raw": score_raw,
+                    "score_centered": score_centered,
+                    "score_mode": "centered" if score_centered is not None else "raw",
+                    "own": own_chunk,
+                    "other": other_chunk,
+                }
+    return best
+
+
 async def _find_semantic_bridges(
     db_path: str, own_path: str, own_sign: str, own_vec: List[float],
     own_sign_source: str = "auto"
@@ -388,7 +473,7 @@ async def _find_semantic_bridges(
 
     sign_for_blocking = own_sign if own_sign_source != "weak_auto" else ""
 
-    bridges = []
+    candidate_bridges: List[Dict[str, Any]] = []
     for path, other_sign, other_sign_source, other_artifact_sign, emb_json in await list_semantic_bridge_rows(db_path):
         if path == own_path:
             continue
@@ -402,12 +487,74 @@ async def _find_semantic_bridges(
             continue
         if sim >= SEMANTIC_BRIDGE_THRESHOLD:
             other_display = other_sign or other_artifact_sign or "?"
-            bridges.append({
+            candidate_bridges.append({
+                "path": path,
                 "entity": Path(path).stem,
                 "link_type": "semantic",
                 "strength": round(sim, 3),
+                "note_score": round(sim, 3),
                 "reason": f"cosine={sim:.2f}, signs={own_sign}<->{other_display}",
+                "_other_display": other_display,
+                "_note_score_raw": sim,
             })
+
+    if not candidate_bridges:
+        return []
+
+    chunks_by_path: Dict[str, List[Dict[str, Any]]] = {}
+    chunk_vectors: List[List[float]] = []
+    try:
+        for chunk in await store_list_chunk_embeddings(db_path):
+            vector = _chunk_vector(chunk)
+            if vector is None:
+                continue
+            chunk_with_vector = {**chunk, "_vector": vector}
+            chunks_by_path.setdefault(str(chunk.get("path", "")), []).append(chunk_with_vector)
+            chunk_vectors.append(vector)
+    except Exception:
+        chunks_by_path = {}
+        chunk_vectors = []
+    chunk_centroid = (
+        _vector_centroid(chunk_vectors)
+        if len(chunk_vectors) >= SEMANTIC_BRIDGE_CENTERED_MIN_CHUNKS
+        else []
+    )
+    own_chunks = chunks_by_path.get(own_path, [])
+
+    bridges = []
+    for bridge in candidate_bridges:
+        path = str(bridge.pop("path"))
+        other_display = str(bridge.pop("_other_display"))
+        sim = float(bridge.pop("_note_score_raw"))
+        other_chunks = chunks_by_path.get(path, [])
+        if own_chunks and other_chunks:
+            evidence = _best_chunk_bridge_evidence(own_chunks, other_chunks, chunk_centroid)
+            if not evidence or evidence["score"] < SEMANTIC_BRIDGE_CHUNK_THRESHOLD:
+                continue
+            chunk_score = evidence["score"]
+            bridge_score = (0.35 * sim) + (0.65 * chunk_score)
+            bridge.update({
+                "strength": round(bridge_score, 3),
+                "chunk_score": round(chunk_score, 3),
+                "chunk_score_raw": round(evidence["score_raw"], 3),
+                "chunk_score_centered": (
+                    round(evidence["score_centered"], 3)
+                    if evidence["score_centered"] is not None
+                    else None
+                ),
+                "chunk_score_mode": evidence["score_mode"],
+                "evidence": {
+                    "own": _chunk_evidence(evidence["own"]),
+                    "other": _chunk_evidence(evidence["other"]),
+                },
+                "reason": (
+                    f"note_cosine={sim:.2f}, chunk_{evidence['score_mode']}={chunk_score:.2f}, "
+                    f"signs={own_sign}<->{other_display}"
+                ),
+            })
+        else:
+            bridge["evidence_status"] = "chunk_embeddings_unavailable"
+        bridges.append(bridge)
 
     bridges.sort(key=lambda x: -x["strength"])
     return bridges[:10]

@@ -39,7 +39,7 @@ Depending on your needs, NOUZ works in three modes: from a simple graph (**LUCA*
 3. Each new note is projected onto these axes. Sign is determined by content, or by you.
 4. L4 gets a domain profile from text classification, while L3/L2 aggregate `core_mix` from child nodes. If a module's `sign` diverges from `core_mix`, the server reports `core_drift`.
 
-**Semantic bridges** find connections between notes from different domains when texts are close in meaning. Tags remain explicit user metadata.
+**Semantic bridges** find connections between notes from different domains when texts are close in meaning. If both notes already have `chunk_embeddings`, the bridge is additionally checked against the best chunk pair and returns concrete evidence. Tags remain explicit user metadata.
 
 ---
 
@@ -134,6 +134,13 @@ anisotropic common background of the embedding space. Each match returns the
 active `score` plus diagnostic `score_raw` and `score_centered` values. Scoped
 search within `path` keeps raw ranking by default; use `score_mode=raw` for
 legacy cosine behavior or `score_mode=centered` to force mean-centered scoring.
+
+`semantic_bridges` remain note-to-note links, but when stored chunks are
+available for both sides NOUZ requires a supporting fragment pair. Such bridges
+return `note_score`, `chunk_score`, `chunk_score_raw`, `chunk_score_centered`,
+`chunk_score_mode`, and `evidence` with span/snippet data for both notes. If
+chunks have not been indexed yet, the bridge keeps the old note-level fallback
+with `evidence_status: chunk_embeddings_unavailable`.
 
 `parents_meta.link_type` supports manual `hierarchy`, `semantic`, `temporary`,
 `tag`, `analogy`, and `error` links. NOUZ does not auto-generate analogy links.

@@ -83,6 +83,11 @@ thresholds:
   # Only proposed between notes with different core signs (cross-domain links).
   semantic_bridge_threshold: 0.55
 
+  # Minimum chunk-pair score required when stored chunk embeddings are available
+  # for both notes in a semantic bridge candidate. This keeps note-level bridges
+  # explainable by concrete text evidence.
+  semantic_bridge_chunk_threshold: 0.55
+
   # Minimum cosine similarity to auto-link a file to a parent.
   # Used by process_orphans and add_entity when auto_parents=true.
   # Raw cosine only — ensures meaningful semantic proximity.
