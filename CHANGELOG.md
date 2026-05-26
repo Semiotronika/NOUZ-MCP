@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.2.4 - released 2026-05-26
+
+### Fixed
+
+- `recalc_core_mix` in strict hierarchy mode now aggregates from direct child
+  levels (`level + 1`) instead of looking upward, matching the L1→L5 model.
+- `index_all` now preserves computed semantic fields (`sign_auto`,
+  `sign_source`, `artifact_sign`, and `core_mix`) during plain YAML/Markdown
+  refreshes, so re-indexing no longer erases the recalculated semantic layer.
+
+### Changed
+
+- Refined the public README/README_EN explanation of `artifact_signs`,
+  `core_mix`, and `core_drift`: artifact type signs do not roll up into L4
+  domain signs, and `core_mix` is a domain profile, not a sum of artifact types.
+
+### Verification
+
+- `python -m compileall -q nouz_mcp pytest_smoke.py scripts`
+- `python -m pytest -q`
+- `python test_server.py`
+
 ## 3.2.3 - released 2026-05-18
 
 ### Changed

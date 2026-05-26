@@ -15,18 +15,18 @@ Works with Obsidian, Logseq, and any directory of Markdown files.
 
 ## Why NOUZ
 
-NOUZ sits between your note base and your AI agent. It helps turn scattered Markdown files into a graph that can be used through MCP:
+NOUZ sits between your note base and an AI agent. It helps turn scattered Markdown files into a graph that is useful both to you and to the agent:
 
-1. **Automatic Classification (Semantics)**  
-   You define "Cores" — base domains of your knowledge base, such as Systems Analysis, Data & Science, and Engineering. When you add a new note, NOUZ reads its text, compares vectors, and proposes a domain sign or a combination of domains.
+1. **Automatic classification (semantics)**
+   You define "cores" — the base domains of your knowledge base. When you add a new note, NOUZ reads its text, compares vectors, and proposes a domain sign or a combination of domains.
 
-2. **Connection Discovery Between Notes**
+2. **Connection discovery between notes**
    The server builds a directed graph (DAG) and proposes links that can be reviewed before they are written:
    - *Semantic bridges:* two notes from different domains point to the same idea.
-   - Explicit `tag` links can be stored manually in `parents_meta`; `suggest_metadata` also proposes read-only `tag_bridges` from shared canonical YAML tags.
+   - Explicit tag links can be stored manually in YAML.
 
-3. **Base Evolution Tracking (Drift)**  
-   NOUZ aggregates data bottom-up. If a module started in one domain while new notes gradually pull it into another, the server shows the divergence (`core_drift`).
+3. **Base evolution tracking (drift)**
+   NOUZ stores the domain profile of content nodes and can compare it with the declared sign. If a module is described as one domain while its profile gradually pulls toward another, the server shows the divergence (`core_drift`).
 
 Depending on your needs, NOUZ works in three modes: from a simple graph (**LUCA**) to a strict 5-level hierarchy (**SLOI**).
 
@@ -34,12 +34,15 @@ Depending on your needs, NOUZ works in three modes: from a simple graph (**LUCA*
 
 ## How It Works
 
-1. You describe domains in `config.yaml` — what each domain covers and which textual signals identify it.
-2. The server turns descriptions into vector etalons (locally, via LM Studio or Ollama).
-3. Each new note is projected onto these axes. Sign is determined by content, or by you.
-4. L4 gets a domain profile from text classification, while L3/L2 aggregate `core_mix` from child nodes. If a module's `sign` diverges from `core_mix`, the server reports `core_drift`.
+1. You describe domains in `config.yaml`: what each domain covers and which textual signals identify it.
+2. The server turns those descriptions into vector etalons (locally, via LM Studio or Ollama).
+3. Each new note is projected onto those axes. The sign is determined by content, or by you.
 
-**Semantic bridges** find connections between notes from different domains when texts are close in meaning. If both notes already have `chunk_embeddings`, the bridge is additionally checked against the best chunk pair and returns concrete evidence. Tags remain explicit user metadata.
+One boundary matters here. `artifact_signs` describe the form of L5 artifacts: log, source, hypothesis, specification, and so on. These signs do not roll up into the L4 domain sign. A log stays a log; a source stays a source.
+
+`core_mix` is not a sum of artifact types. It is a domain profile stored in the SQLite index. L4/L3/L2 get it from their own text during `recalc_signs`; parent nodes can then receive an averaged profile from child content nodes through `recalc_core_mix`. `core_drift` appears when the stored domain profile and the current `sign` point to different leading domains.
+
+**Semantic bridges** find connections between notes from different domains when texts are close in meaning. If both notes already have chunks, the bridge is additionally checked against the best chunk pair and returns concrete evidence. Tags remain explicit user metadata.
 
 ---
 
@@ -50,7 +53,7 @@ pip install nouz-mcp
 OBSIDIAN_ROOT=/path/to/vault nouz-mcp
 ```
 
-Without `config.yaml`, the server starts in **LUCA** mode — graph without semantics, works immediately.
+Without `config.yaml`, the server starts in **LUCA** mode: graph without semantics, ready immediately.
 
 To enable semantic mode, create a local config from the template:
 
@@ -103,64 +106,18 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 | `read_file` | Read a note + metadata |
 | `calibrate_cores` | Update core reference vectors |
 | `recalc_signs` | Recalculate signs for all notes |
-| `recalc_core_mix` | Recalculate bottom-up aggregation |
-| `index_all` | Re-index the entire base; with `with_embeddings=true`, also refresh file/chunk embeddings |
+| `recalc_core_mix` | Recalculate parent domain profiles from child content nodes |
+| `index_all` | Re-index the whole base; with `with_embeddings=true`, also refresh file/chunk embeddings |
 | `embed` | Get a vector for text |
-| `chunk_text` | Split Markdown text into deterministic retrieval chunks |
-| `chunk_file` | Split one note body into deterministic retrieval chunks |
-| `search_chunks` | Search stored chunk embeddings; defaults to mean-centered scoring for unscoped large searches |
-| `list_files` | List with filters by level, sign |
+| `chunk_text` | Split Markdown text into stable chunks |
+| `chunk_file` | Split one note body into stable chunks |
+| `search_chunks` | Search stored chunks; by default, reduces anisotropy |
+| `list_files` | List files with filters by level and sign |
 | `get_children` | Traverse down the graph |
 | `get_parents` | Traverse up the graph |
 | `suggest_parents` | Find parents for an orphan |
-| `add_entity` | Create an entity in one step (auto sign/parents, explicit tags only) |
-| `process_orphans` | Auto-fill files without markup |
-
-Set `NOUZ_READ_ONLY=true` to hide and block mutating tools (`write_file`,
-`update_metadata`, `index_all`, recalculation, orphan processing, and entity
-creation). Read-only tools such as `read_file`, `suggest_metadata`, `embed`,
-`chunk_text`, `chunk_file`, and `search_chunks` remain available. With
-`NOUZ_READ_ONLY=true`, read-only tools do not refresh the SQLite cache by
-default, and startup skips DB init/index/calibration; set `NOUZ_CACHE_WRITE=true`
-if you want cache writes in read-only mode.
-
-`chunk_text` and `chunk_file` return `chunker_version`, stable `id`, actual
-chunk text coordinates (`start_char`/`end_char`), body coordinates without
-overlap (`body_start_char`/`body_end_char`), and hash fields. `index_all` with
-`with_embeddings=true` stores these chunks in the SQLite `chunk_embeddings`
-table, and `search_chunks` ranks them by semantic score. In `score_mode=auto`,
-large unscoped candidate sets use mean-centered cosine to reduce the
-anisotropic common background of the embedding space. Each match returns the
-active `score` plus diagnostic `score_raw` and `score_centered` values. Scoped
-search within `path` keeps raw ranking by default; use `score_mode=raw` for
-legacy cosine behavior or `score_mode=centered` to force mean-centered scoring.
-
-`semantic_bridges` remain note-to-note links, but when stored chunks are
-available for both sides NOUZ requires a supporting fragment pair. Such bridges
-return `note_score`, `chunk_score`, `chunk_score_raw`, `chunk_score_centered`,
-`chunk_score_mode`, and `evidence` with span/snippet data for both notes. If
-chunks have not been indexed yet, the bridge keeps the old note-level fallback
-with `evidence_status: chunk_embeddings_unavailable`.
-
-`parents_meta.link_type` supports manual `hierarchy`, `semantic`, `temporary`,
-`tag`, `analogy`, and `error` links. NOUZ does not auto-generate analogy links.
-`tag_bridges` in `suggest_metadata` are suggestions from explicit YAML tags and
-are not written back to files.
-
-YAML tags are explicit metadata: NOUZ normalizes them to canonical slug form
-(`agent-context`, optionally `area/topic`) and rejects obvious non-tags such as
-hex colors, URLs, numeric-only tokens, empty values, and `none`/`null`.
-`suggest_metadata` returns `tag_quality` so an agent can see which tags are
-accepted for future `tag_bridges` and which raw values were discarded.
-For tag automation, `suggest_metadata` also returns read-only `tag_candidates`:
-candidates from the already accepted YAML tag vocabulary in the index and
-explicit inline `#tag` markers in the note body. Candidates are not written to
-YAML automatically; once accepted through `update_metadata`, normal
-`tag_bridges` work from those tags. Before writing, possible links are returned
-separately as `candidate_tag_bridges`. For each candidate, NOUZ temporarily
-chunks the current text and returns `evidence` with `chunk_id`, heading,
-coordinates, and a short snippet. This does not require a prebuilt
-`chunk_embeddings` table.
+| `add_entity` | Create an entity in one step: automatic sign and hierarchy, explicit tags only |
+| `process_orphans` | Auto-fill files without enough markup |
 
 ---
 
@@ -231,20 +188,19 @@ artifact_signs:
     text: Technical specification, instruction, requirements.
 ```
 
-After setup, run `calibrate_cores` — the server creates reference vectors.
-Check pairwise cosines: mean-centered between different domains should be
-noticeably lower than raw. If all pairs are roughly equal — strengthen the differences in texts.
+After setup, run `calibrate_cores`: the server creates reference vectors.
+Check pairwise cosines: mean-centered values between different domains should be noticeably lower than raw values. If all pairs are roughly the same, strengthen the differences in the texts.
 You can also run the standalone etalon check from the installed package:
 `nouz-calc-etalons --config config.yaml`.
 
 `etalons` are semantic domains compared through embeddings.
-`artifact_signs` describe the material type of L5 artifacts: note, concept, reference, log, update, hypothesis, or specification. This is a heuristic label, not a separate embedding etalon. In the public convention, domains use uppercase signs (`S/D/E`) while material types use lowercase signs (`n/c/r/l/u/h/s`); you can replace them in config as long as signs stay short and do not conflict with domain signs. If needed, add `keywords` to any material type: the server will use your detection words instead of the built-in RU/EN fallback.
+`artifact_signs` describe the material type of L5 artifacts: note, concept, reference, log, update, hypothesis, or specification. This is a heuristic label. Domains usually use uppercase signs (`S/D/E`), while material types use lowercase signs (`n/c/r/l/u/h/s`); you can replace them in config with any short, non-conflicting values. If needed, add `keywords` to any material type, and the server will use your words for the heuristic instead of the built-in RU/EN set.
 
 ### Real Calculation Example
 
 Here are actual results for the S/D/E etalons using the `text-embedding-granite-embedding-278m-multilingual` model:
 
-```
+```text
 === Pairwise Cosine (raw) ===
 S↔D: 0.5894    S↔E: 0.5862    D↔E: 0.6022
 
@@ -256,9 +212,9 @@ Negative mean-centered values are a good result here: after subtracting the mean
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `OBSIDIAN_ROOT` | `./obsidian` | Path to vault |
+| `OBSIDIAN_ROOT` | `./obsidian` | Path to the vault |
 | `NOUZ_CONFIG` | *(empty)* | Absolute path to `config.yaml`; if omitted, the server looks in the current working directory |
-| `NOUZ_DATABASE_NAME` | `obsidian_kb.db` | SQLite cache filename inside `OBSIDIAN_ROOT`; useful for isolated public checks, e.g. `obsidian_kb.public.db` |
+| `NOUZ_DATABASE_NAME` | `obsidian_kb.db` | SQLite cache filename inside `OBSIDIAN_ROOT`; useful for isolated checks, for example `obsidian_kb.public.db` |
 | `NOUZ_DATABASE_PATH` | *(empty)* | Full SQLite cache path; takes precedence over `NOUZ_DATABASE_NAME` |
 | `EMBED_PROVIDER` | `openai` | `openai`, `lmstudio`, `ollama` |
 | `EMBED_API_URL` | `http://127.0.0.1:1234/v1` | Embedding endpoint |
@@ -271,10 +227,10 @@ Negative mean-centered values are a good result here: after subtracting the mean
 
 | Component | Local? |
 |-----------|-----------|
-| Embeddings (LM Studio / Ollama) | ✅ Yes |
-| Your notes | ✅ Yes |
-| NOUZ server | ✅ Yes |
-| AI agent context (Claude, ChatGPT) | ❌ Goes to cloud |
+| Embeddings (LM Studio / Ollama) | Yes |
+| Your notes | Yes |
+| NOUZ server | Yes |
+| AI agent context (Claude, ChatGPT) | Goes to the cloud |
 
 Everything critical stays on your machine.
 

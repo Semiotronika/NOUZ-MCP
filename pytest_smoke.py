@@ -82,7 +82,7 @@ from nouz_mcp.vectors import cosine, mean_center  # noqa: E402
 
 
 def test_package_server_exposes_server_api():
-    assert __version__ == "3.2.3"
+    assert __version__ == "3.2.4"
     assert server.VERSION == __version__
     assert callable(server.run_server)
     assert callable(server.main)
@@ -532,6 +532,24 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
                 row = await cur.fetchone()
         assert row == ("S", "auto", "S", json.dumps({"S": 100.0}))
         assert await store_get_core_mix(db_path, str(indexed_path)) == {"S": 100.0}
+
+        await store_index_file(
+            db_path,
+            indexed_path,
+            {
+                "type": "quant",
+                "level": 4,
+                "content": "Long body updated from disk",
+                "parents_meta": [{"entity": "A", "link_type": "hierarchy"}],
+                "tags": ["graph"],
+            },
+            get_parents_meta=get_parents_meta,
+            resolve_entity_path=lambda entity: asyncio.sleep(0, result=f"{entity}.md"),
+        )
+        async with aiosqlite.connect(db_path) as db:
+            async with db.execute("SELECT sign, sign_source, sign_auto, core_mix FROM files WHERE path = ?", (str(indexed_path),)) as cur:
+                row = await cur.fetchone()
+        assert row == ("S", "auto", "S", json.dumps({"S": 100.0}))
 
     asyncio.run(scenario())
 
@@ -1019,7 +1037,7 @@ def test_recalc_core_mix_use_case_wires_layers():
         )
 
         assert result == {"updated": 1}
-        assert captured["child_levels"] == [("parent.md", 2)]
+        assert captured["child_levels"] == [("parent.md", 4)]
         assert captured["updates"] == [('{"S": 75.0}', "parent.md")]
 
     asyncio.run(scenario())

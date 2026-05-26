@@ -1006,7 +1006,7 @@ async def recalc_core_mix(
         if level == 5:
             continue
         if level_strict:
-            child_level = (level or 0) - 1 if level else None
+            child_level = (level or 0) + 1 if level else None
         else:
             child_level = None
         core_mix = await aggregate_core_mix(db_path, path, child_level)

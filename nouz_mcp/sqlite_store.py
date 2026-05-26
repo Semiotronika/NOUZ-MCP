@@ -176,6 +176,39 @@ async def index_file(
                     resolved_parents.append((parent_entity, link_type))
 
     async with aiosqlite.connect(db_path) as db:
+        # index_all mirrors Markdown/YAML, but recalc_signs owns computed fields.
+        # Preserve them so a plain re-index does not erase the semantic layer.
+        async with db.execute(
+            "SELECT sign, sign_source, sign_auto, artifact_sign, core_mix FROM files WHERE path = ?",
+            (str(file_path),),
+        ) as cur:
+            existing = await cur.fetchone()
+
+        existing_sign = existing[0] if existing else ""
+        existing_source = existing[1] if existing else None
+        existing_auto = existing[2] if existing else None
+        existing_artifact = existing[3] if existing else ""
+        existing_core_mix = existing[4] if existing else None
+
+        if yaml_sign:
+            indexed_sign = yaml_sign
+            indexed_source = existing_source
+        elif existing_source == "manual":
+            indexed_sign = existing_auto or ""
+            indexed_source = "auto" if existing_auto else None
+        else:
+            indexed_sign = existing_sign or existing_auto or ""
+            indexed_source = existing_source
+
+        artifact_value = meta.get("artifact_sign", "")
+        if not artifact_value and level == 5:
+            artifact_value = existing_artifact or ""
+
+        if meta.get("core_mix"):
+            core_mix_json = json.dumps(meta.get("core_mix", {}), ensure_ascii=False)
+        else:
+            core_mix_json = existing_core_mix
+
         await db.execute(
             '''INSERT OR REPLACE INTO files
                (path, type, sign, sign_manual, sign_auto, sign_source, artifact_sign, level, status, content, updated, tags, core_mix)
@@ -183,17 +216,17 @@ async def index_file(
             (
                 str(file_path),
                 meta.get("type", ""),
-                meta.get("sign", ""),
+                indexed_sign,
                 yaml_sign if yaml_sign else None,
-                None,
-                None,
-                meta.get("artifact_sign", ""),
+                existing_auto,
+                indexed_source,
+                artifact_value,
                 level,
                 meta.get("status", "active"),
                 meta.get("content", "")[:2000],
                 datetime.now().isoformat(),
                 json.dumps(explicit_tag_list(meta), ensure_ascii=False),
-                json.dumps(meta.get("core_mix", {}), ensure_ascii=False) if meta.get("core_mix") else None,
+                core_mix_json,
             ),
         )
 
