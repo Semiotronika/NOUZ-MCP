@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.2.5 - released 2026-05-30
+
+### Fixed
+
+- Mean-centered semantic classification now centers candidate note vectors
+  against the raw etalon centroid. This makes `_determine_core_by_embedding`
+  and `nouz-calc-etalons` use the same centering chain and restores the current
+  S/D/E etalon smoke-test values.
+- `derived_from` links are accepted as provenance links without strict
+  hierarchy adjacency or cycle checks. Hierarchy validation remains limited to
+  `hierarchy` links.
+
+### Changed
+
+- LUCA now hides retrieval/embedding tools (`embed`, `chunk_text`,
+  `chunk_file`, `search_chunks`) and rejects `index_all(with_embeddings=true)`,
+  keeping graph-only mode graph-only.
+- README and README_EN now describe LUCA/PRIZMA/SLOI tool availability and
+  replace the old self-classification wording with etalon smoke-test wording.
+
+### Verification
+
+- `python -m compileall -q nouz_mcp pytest_smoke.py scripts`
+- `python -m pytest -q`
+- `python test_server.py`
+- `python -m build --no-isolation --sdist --wheel --outdir .build-tmp/dist-3.2.5`
+- `python -m twine check .build-tmp/dist-3.2.5/*`
+
 ## 3.2.4 - released 2026-05-26
 
 ### Fixed

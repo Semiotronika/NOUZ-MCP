@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 import yaml
 
-from .vectors import cosine, mean_center
+from .vectors import center_vector, cosine, mean_center, mean_vector
 
 
 DEFAULT_EMBED_MODEL = "text-embedding-granite-embedding-278m-multilingual"
@@ -107,8 +107,13 @@ def get_embedding(text: str, api_url: str, model: str, api_key: str) -> list[flo
     return data["data"][0]["embedding"]
 
 
-def spread_percentages(vec: list[float], centered: dict[str, list[float]]) -> tuple[dict[str, float], float]:
-    scores = {sign: cosine(vec, etalon_vec) for sign, etalon_vec in centered.items()}
+def spread_percentages(
+    vec: list[float],
+    centered: dict[str, list[float]],
+    centroid: list[float] | None = None,
+) -> tuple[dict[str, float], float]:
+    candidate = center_vector(vec, centroid) if centroid is not None else vec
+    scores = {sign: cosine(candidate, etalon_vec) for sign, etalon_vec in centered.items()}
     min_val = min(scores.values())
     max_val = max(scores.values())
     spread = max_val - min_val
@@ -175,13 +180,14 @@ def main(argv: list[str] | None = None) -> int:
             etalon_vecs[sign] = vector
             print(f"{sign}: dim={len(vector)}")
 
+        centroid = mean_vector(etalon_vecs)
         centered = mean_center(etalon_vecs)
         print_pairwise("Pairwise Cosine (raw)", etalon_vecs)
         print_pairwise("Pairwise Cosine (mean-centered)", centered)
 
         print("\n=== Spread-normalized self-classification ===")
         for sign in sorted(etalon_vecs.keys()):
-            percentages, spread = spread_percentages(etalon_vecs[sign], centered)
+            percentages, spread = spread_percentages(etalon_vecs[sign], centered, centroid)
             dominant = max(percentages, key=percentages.get)
             print(f"{sign}: {percentages} dominant={dominant} spread={spread:.4f}")
     except (FileNotFoundError, ValueError, KeyError, HTTPError, URLError) as exc:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Nouz -- Unified MCP Server for Obsidian. v3.2.4
+Nouz -- Unified MCP Server for Obsidian. v3.2.5
 
 Three modes:
 - luca: Graph-based, level is for display only, no semantic classification
@@ -85,7 +85,7 @@ from nouz_mcp.use_cases import write_file_with_metadata as write_file_with_metad
 from nouz_mcp.vault_io import read_text as read_vault_text
 from nouz_mcp.vault_io import read_file_with_metadata as read_vault_file_with_metadata
 from nouz_mcp.vault_io import write_text as write_vault_text
-from nouz_mcp.vectors import cosine, mean_center
+from nouz_mcp.vectors import center_vector, cosine, mean_center, mean_vector
 
 VERSION = __version__
 
@@ -102,6 +102,8 @@ READ_ONLY_DISABLED_TOOLS = frozenset(
         "add_entity",
     }
 )
+
+SEMANTIC_MODE_TOOLS = frozenset({"embed", "chunk_text", "chunk_file", "search_chunks"})
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -127,6 +129,18 @@ def filter_read_only_tools(tools: list[types.Tool], *, read_only: bool) -> list[
     return [tool for tool in tools if not is_read_only_disabled_tool(tool.name)]
 
 
+def is_semantic_mode_tool(name: str) -> bool:
+    """Return True for retrieval/embedding tools hidden in graph-only LUCA mode."""
+    return name in SEMANTIC_MODE_TOOLS
+
+
+def filter_mode_tools(tools: list[types.Tool], *, rule: Dict[str, Any]) -> list[types.Tool]:
+    """Hide retrieval and embedding tools in graph-only LUCA mode."""
+    if rule.get("reference_vectors"):
+        return tools
+    return [tool for tool in tools if not is_semantic_mode_tool(tool.name)]
+
+
 def read_only_tool_error(name: str) -> list[types.TextContent]:
     return [
         types.TextContent(
@@ -135,6 +149,24 @@ def read_only_tool_error(name: str) -> list[types.TextContent]:
                 {"error": f"Tool '{name}' is disabled because NOUZ_READ_ONLY=true."},
                 ensure_ascii=False,
             ),
+        )
+    ]
+
+
+def semantic_mode_error(mode_name: str) -> Dict[str, str]:
+    return {
+        "error": (
+            f"Retrieval and embeddings are not available in '{mode_name}' mode. "
+            "Use 'prizma' or 'sloi' mode for chunk, search, and embedding tools."
+        )
+    }
+
+
+def semantic_mode_tool_error(mode_name: str) -> list[types.TextContent]:
+    return [
+        types.TextContent(
+            type="text",
+            text=json.dumps(semantic_mode_error(mode_name), ensure_ascii=False),
         )
     ]
 
@@ -640,12 +672,10 @@ async def _determine_core_by_embedding(content: str, db_path: str) -> Dict[str, 
         return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
 
     centered = mean_center(etalons)
-    centroid = [0.0] * len(vec)
-    n = len(centered)
-    for cv in centered.values():
-        for i in range(len(centroid)):
-            centroid[i] += cv[i] / n
-    vec_centered = [vec[i] - centroid[i] for i in range(len(vec))]
+    centroid = mean_vector(etalons)
+    vec_centered = center_vector(vec, centroid)
+    if not centered or not vec_centered:
+        return {"dominant": None, "above_threshold": [], "scores": {}, "percentages": {}, "spread": 0.0, "max_cosine": 0.0, "confident": False}
 
     scores_raw = {sign: cosine(vec, ev) for sign, ev in etalons.items()}
     scores = {sign: cosine(vec_centered, centered[sign]) for sign in centered}
@@ -817,6 +847,8 @@ def _check_hierarchy_strict(entity_type: str, parents: List[Dict]) -> List[Dict]
     errors = []
     entity_level = _get_level(entity_type)
     for p in parents:
+        if p.get("link_type", "hierarchy") != "hierarchy":
+            continue
         p_type = p.get("type", "")
         p_level = _get_level(p_type) if p_type else None
         if p_level is None:
@@ -1133,7 +1165,7 @@ async def run_server():
                                 "sign": {"type": "string", "description": "Domain sign assigned manually or by semantic classification, e.g. S, D, E."},
                                 "artifact_sign": {"type": "string", "description": "Material type sign for artifacts/quants, e.g. note, concept, reference, log, update, hypothesis, specification."},
                                 "parents": {"type": "array", "items": {"type": "string"}, "description": "Obsidian wiki links for parents, e.g. ['[[Systems]]']."},
-                                "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "semantic", "temporary", "tag", "analogy", "error"]}}}, "description": "Structured parent links used by NOUZ."},
+                                "parents_meta": {"type": "array", "items": {"type": "object", "properties": {"entity": {"type": "string"}, "link_type": {"type": "string", "enum": ["hierarchy", "derived_from", "semantic", "temporary", "tag", "analogy", "error"]}}}, "description": "Structured parent links used by NOUZ."},
                                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Explicit search or semantic tags. They are normalized to canonical slug form; NOUZ does not infer tags."}
                             }
                         },
@@ -1189,7 +1221,7 @@ async def run_server():
             types.Tool(
                 name="get_parents",
                 description="Return the parent links of one note from the graph index. Each result includes the parent entity name "
-                            "and link_type, such as hierarchy, semantic, temporary, tag, analogy, or error. Use this to understand "
+                            "and link_type, such as hierarchy, derived_from, semantic, temporary, tag, analogy, or error. Use this to understand "
                             "where a note belongs before editing links. It is read-only. Use suggest_parents when a note has no "
                             "parents and you want candidate links.",
                 inputSchema={
@@ -1238,7 +1270,7 @@ async def run_server():
             ),
             types.Tool(
                 name="chunk_text",
-                description="Split Markdown text into deterministic, embedding-ready chunks. This is a read-only low-level "
+                description="Split Markdown text into deterministic chunks. This is a read-only low-level "
                             "retrieval primitive: it does not index, embed, or write anything.",
                 inputSchema={
                     "type": "object",
@@ -1253,7 +1285,7 @@ async def run_server():
             ),
             types.Tool(
                 name="chunk_file",
-                description="Read one Markdown note and return deterministic, embedding-ready chunks of its body. Read-only: "
+                description="Read one Markdown note and return deterministic chunks of its body. Read-only: "
                             "does not index, embed, or write anything. Use before designing chunk embeddings or context packs.",
                 inputSchema={
                     "type": "object",
@@ -1290,7 +1322,7 @@ async def run_server():
                 name="index_all",
                 description="Scan the whole Markdown vault and rebuild the local SQLite index of files, metadata, and graph links. "
                             "Use this after adding, moving, or reorganizing notes outside NOUZ. It is safe to run repeatedly and "
-                            "reports missing parent links. With with_embeddings=true it also updates file and chunk embeddings for "
+                            "reports missing parent links. In PRIZMA/SLOI, with_embeddings=true also updates file and chunk embeddings for "
                             "retrieval and semantic classification, which is slower and requires an embedding provider. This tool indexes data; it is not "
                             "a search tool.",
                 inputSchema={
@@ -1390,7 +1422,7 @@ async def run_server():
                                     "type": "object",
                                     "properties": {
                                         "entity": {"type": "string", "description": "Parent entity name or path."},
-                                        "link_type": {"type": "string", "description": "Relationship type.", "enum": ["hierarchy", "semantic", "temporary", "tag", "analogy", "error"]}
+                                        "link_type": {"type": "string", "description": "Relationship type.", "enum": ["hierarchy", "derived_from", "semantic", "temporary", "tag", "analogy", "error"]}
                                     },
                                     "required": ["entity"]
                                 },
@@ -1406,6 +1438,7 @@ async def run_server():
                 )
             )
         
+        tools = filter_mode_tools(tools, rule=RULE)
         return filter_read_only_tools(tools, read_only=READ_ONLY)
 
     @server.call_tool()
@@ -1414,6 +1447,8 @@ async def run_server():
         try:
             if READ_ONLY and is_read_only_disabled_tool(name):
                 return read_only_tool_error(name)
+            if is_semantic_mode_tool(name) and not RULE["reference_vectors"]:
+                return semantic_mode_tool_error(MODE)
 
             if name == "read_file":
                 rel = args.get("path", "")
@@ -1577,6 +1612,13 @@ async def run_server():
 
             elif name == "index_all":
                 with_embeddings = args.get("with_embeddings", False)
+                if with_embeddings and not RULE["reference_vectors"]:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=json.dumps(semantic_mode_error(MODE), ensure_ascii=False),
+                        )
+                    ]
                 result = await _index_all_files(db_path, with_embeddings=with_embeddings)
                 return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 

@@ -581,6 +581,8 @@ async def write_file_with_metadata(
             rel_path = str(file_path.relative_to(root)) if file_path.is_absolute() else str(file_path)
             for parent in synced["parents_meta"]:
                 if isinstance(parent, dict):
+                    if parent.get("link_type", "hierarchy") != "hierarchy":
+                        continue
                     parent_entity = parent.get("entity", "")
                     if parent_entity:
                         parent_path = await resolve_entity_path(db_path, parent_entity)

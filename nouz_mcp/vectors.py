@@ -14,6 +14,26 @@ def cosine(v1: List[float], v2: List[float]) -> float:
     return dot / (n1 * n2)
 
 
+def mean_vector(vecs: Dict[str, List[float]]) -> List[float]:
+    if not vecs:
+        return []
+    dim = len(next(iter(vecs.values())))
+    mean = [0.0] * dim
+    for v in vecs.values():
+        if len(v) != dim:
+            return []
+        for i in range(dim):
+            mean[i] += v[i]
+    n = len(vecs)
+    return [m / n for m in mean]
+
+
+def center_vector(vec: List[float], centroid: List[float]) -> List[float]:
+    if not vec or len(vec) != len(centroid):
+        return []
+    return [vec[i] - centroid[i] for i in range(len(vec))]
+
+
 def mean_center(vecs: Dict[str, List[float]]) -> Dict[str, List[float]]:
     """Subtract the mean vector from all vectors (anisotropy correction).
 
@@ -23,11 +43,7 @@ def mean_center(vecs: Dict[str, List[float]]) -> Dict[str, List[float]]:
     """
     if len(vecs) < 2:
         return vecs
-    dim = len(next(iter(vecs.values())))
-    mean = [0.0] * dim
-    for v in vecs.values():
-        for i in range(dim):
-            mean[i] += v[i]
-    n = len(vecs)
-    mean = [m / n for m in mean]
-    return {k: [v[i] - mean[i] for i in range(dim)] for k, v in vecs.items()}
+    mean = mean_vector(vecs)
+    if not mean:
+        return {}
+    return {k: center_vector(v, mean) for k, v in vecs.items()}

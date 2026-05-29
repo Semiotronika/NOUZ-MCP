@@ -21,7 +21,7 @@ NOUZ sits between your note base and an AI agent. It helps turn scattered Markdo
    You define "cores" — the base domains of your knowledge base. When you add a new note, NOUZ reads its text, compares vectors, and proposes a domain sign or a combination of domains.
 
 2. **Connection discovery between notes**
-   The server builds a directed graph (DAG) and proposes links that can be reviewed before they are written:
+   The server builds a directed structural graph: `hierarchy` is kept as an acyclic DAG, while additional semantic links live alongside it:
    - *Semantic bridges:* two notes from different domains point to the same idea.
    - Explicit tag links can be stored manually in YAML.
 
@@ -107,11 +107,11 @@ Connect to Claude Desktop, Cursor, OpenCode, or any MCP client:
 | `calibrate_cores` | Update core reference vectors |
 | `recalc_signs` | Recalculate signs for all notes |
 | `recalc_core_mix` | Recalculate parent domain profiles from child content nodes |
-| `index_all` | Re-index the whole base; with `with_embeddings=true`, also refresh file/chunk embeddings |
-| `embed` | Get a vector for text |
-| `chunk_text` | Split Markdown text into stable chunks |
-| `chunk_file` | Split one note body into stable chunks |
-| `search_chunks` | Search stored chunks; by default, reduces anisotropy |
+| `index_all` | Re-index the whole base; in PRIZMA/SLOI, `with_embeddings=true` also refreshes file/chunk embeddings |
+| `embed` | Get a vector for text in PRIZMA/SLOI |
+| `chunk_text` | Split Markdown text into stable chunks in PRIZMA/SLOI |
+| `chunk_file` | Split one note body into stable chunks in PRIZMA/SLOI |
+| `search_chunks` | Search stored chunk embeddings in PRIZMA/SLOI; by default, reduces anisotropy |
 | `list_files` | List files with filters by level and sign |
 | `get_children` | Traverse down the graph |
 | `get_parents` | Traverse up the graph |
@@ -208,7 +208,7 @@ S↔D: 0.5894    S↔E: 0.5862    D↔E: 0.6022
 S↔D: -0.5059   S↔E: -0.5117   D↔E: -0.4822
 ```
 
-Negative mean-centered values are a good result here: after subtracting the mean vector, domains are well-separated. Self-classification: S→99.4%, D→97.5%, E→96.9%.
+Negative mean-centered values are a good result here: after subtracting the mean vector, domains are well-separated. Current `nouz-calc-etalons` etalon smoke test: S→99.6%, D→98.5%, E→98.1%. This is not a whole-base quality score; it checks that each etalon returns to its own sign after the same centering step.
 
 | Variable | Default | Description |
 | --- | --- | --- |

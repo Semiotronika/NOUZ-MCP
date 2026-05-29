@@ -78,11 +78,11 @@ from nouz_mcp.use_cases import write_file_with_metadata as write_file_with_metad
 from nouz_mcp.vault_io import read_file_with_metadata as read_vault_file_with_metadata  # noqa: E402
 from nouz_mcp.vault_io import read_text as read_vault_text  # noqa: E402
 from nouz_mcp.vault_io import write_text as write_vault_text  # noqa: E402
-from nouz_mcp.vectors import cosine, mean_center  # noqa: E402
+from nouz_mcp.vectors import center_vector, cosine, mean_center, mean_vector  # noqa: E402
 
 
 def test_package_server_exposes_server_api():
-    assert __version__ == "3.2.4"
+    assert __version__ == "3.2.5"
     assert server.VERSION == __version__
     assert callable(server.run_server)
     assert callable(server.main)
@@ -107,6 +107,30 @@ def test_read_only_tool_filter_hides_mutating_tools():
     assert server.is_read_only_disabled_tool("write_file") is True
     assert server.is_read_only_disabled_tool("chunk_file") is False
     assert server.is_read_only_disabled_tool("search_chunks") is False
+
+
+def test_luca_tool_filter_hides_retrieval_and_embedding_tools():
+    tools = [
+        server.types.Tool(name="read_file", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="index_all", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="embed", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="chunk_text", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="chunk_file", description="", inputSchema={"type": "object"}),
+        server.types.Tool(name="search_chunks", description="", inputSchema={"type": "object"}),
+    ]
+
+    visible = server.filter_mode_tools(tools, rule=server.RULES["luca"])
+    visible_names = {tool.name for tool in visible}
+
+    assert visible_names == {"read_file", "index_all"}
+    assert server.filter_mode_tools(tools, rule=server.RULES["prizma"]) == tools
+    assert server.is_semantic_mode_tool("embed") is True
+    assert server.is_semantic_mode_tool("chunk_text") is True
+    assert server.is_semantic_mode_tool("chunk_file") is True
+    assert server.is_semantic_mode_tool("search_chunks") is True
+
+    error = server.semantic_mode_error("luca")
+    assert "Retrieval and embeddings are not available in 'luca' mode" in error["error"]
 
 
 def test_read_only_env_disables_cache_writes_by_default():
@@ -253,10 +277,68 @@ def test_extracted_helpers_match_server_contract(tmp_path):
     assert safe_path(str(tmp_path), "../outside.md") is None
     assert serialize("plain") == "plain"
     assert cosine([1.0, 0.0], [1.0, 0.0]) == 1.0
+    assert mean_vector({"a": [1.0, 3.0], "b": [3.0, 1.0]}) == [2.0, 2.0]
+    assert center_vector([10.0, 0.8], [10.0, 0.0]) == [0.0, 0.8]
     assert mean_center({"a": [1.0, 3.0], "b": [3.0, 1.0]}) == {
         "a": [-1.0, 1.0],
         "b": [1.0, -1.0],
     }
+
+
+def test_determine_core_centers_note_against_raw_etalon_centroid():
+    async def scenario():
+        old_rule = dict(server.RULE)
+        old_get_embedding = server._get_embedding
+        old_load_reference_vectors = server._load_reference_vectors
+        old_sign_spread = server.SIGN_SPREAD_THRESHOLD
+        old_confident_spread = server.CONFIDENT_SPREAD_THRESHOLD
+
+        async def fake_get_embedding(text: str):
+            return [10.0, 0.8]
+
+        async def fake_load_reference_vectors(db_path: str):
+            return {
+                "S": [10.0, 1.0],
+                "D": [10.0, -1.0],
+            }
+
+        try:
+            server.RULE["reference_vectors"] = True
+            server.SIGN_SPREAD_THRESHOLD = 0.05
+            server.CONFIDENT_SPREAD_THRESHOLD = 60.0
+            server._get_embedding = fake_get_embedding
+            server._load_reference_vectors = fake_load_reference_vectors
+
+            result = await server._determine_core_by_embedding("note", "db.sqlite")
+        finally:
+            server.RULE.clear()
+            server.RULE.update(old_rule)
+            server.SIGN_SPREAD_THRESHOLD = old_sign_spread
+            server.CONFIDENT_SPREAD_THRESHOLD = old_confident_spread
+            server._get_embedding = old_get_embedding
+            server._load_reference_vectors = old_load_reference_vectors
+
+        assert result["scores"] == {"S": 1.0, "D": -1.0}
+        assert result["scores_raw"]["S"] > 0.99
+        assert result["percentages"] == {"S": 100.0, "D": 0.0}
+        assert result["dominant"] == "S"
+        assert result["confident"] is True
+
+    asyncio.run(scenario())
+
+
+def test_calc_etalons_self_classification_uses_same_centroid():
+    etalons = {
+        "S": [10.0, 1.0],
+        "D": [10.0, -1.0],
+    }
+    centered = mean_center(etalons)
+    centroid = mean_vector(etalons)
+
+    percentages, spread = calc_etalons.spread_percentages(etalons["S"], centered, centroid)
+
+    assert spread == 2.0
+    assert percentages == {"S": 100.0, "D": 0.0}
 
 
 def test_markdown_helpers_are_directly_usable():
@@ -328,6 +410,10 @@ def test_mode_helpers_are_directly_usable():
     assert rules["prizma"]["semantic_bridges"] is True
     assert rules["sloi"]["level_strict"] is True
     assert rules["sloi"]["hierarchy_check"]("artifact", []) == [{"entity_type": "artifact", "parents": []}]
+    assert server._check_hierarchy_strict(
+        "quant",
+        [{"entity": "SourceLog", "type": "artifact", "link_type": "derived_from"}],
+    ) == []
 
     assert get_type_by_level(4) == "quant"
     assert get_type_by_level(99) == "artifact"
@@ -457,6 +543,30 @@ def test_sqlite_store_helpers_are_directly_usable(tmp_path):
             resolve_entity_path=lambda entity: asyncio.sleep(0, result=f"{entity}.md"),
         )
         assert await store_get_db_parents(db_path, str(indexed_path)) == [{"entity": "A", "link_type": "hierarchy"}]
+        derived_path = tmp_path / "derived.md"
+        await store_index_file(
+            db_path,
+            derived_path,
+            {
+                "type": "quant",
+                "level": 4,
+                "sign": "S",
+                "content": "Derived body",
+                "parents_meta": [
+                    {"entity": "A", "link_type": "hierarchy"},
+                    {"entity": "SourceLog", "link_type": "derived_from"},
+                ],
+            },
+            get_parents_meta=get_parents_meta,
+            resolve_entity_path=lambda entity: asyncio.sleep(0, result=f"{entity}.md"),
+        )
+        assert sorted(
+            await store_get_db_parents(db_path, str(derived_path)),
+            key=lambda parent: parent["link_type"],
+        ) == [
+            {"entity": "SourceLog", "link_type": "derived_from"},
+            {"entity": "A", "link_type": "hierarchy"},
+        ]
         await store_save_embedding(db_path, str(indexed_path), [0.5, 0.5])
         candidates = await store_list_embedding_candidates(db_path)
         assert any(row[0] == str(indexed_path) and row[1] == "quant" for row in candidates)
@@ -558,6 +668,7 @@ def test_link_helpers_are_directly_usable(tmp_path):
     meta = {
         "parents_meta": [
             "[[Module]]",
+            {"entity": "SourceLog", "link_type": "derived_from"},
             {"entity": "Concept", "link_type": "semantic"},
             {"entity": "Analogy", "link_type": "analogy"},
         ],
@@ -565,12 +676,13 @@ def test_link_helpers_are_directly_usable(tmp_path):
     }
     assert get_parents_meta(meta) == [
         {"entity": "Module", "link_type": "hierarchy"},
+        {"entity": "SourceLog", "link_type": "derived_from"},
         {"entity": "Concept", "link_type": "semantic"},
         {"entity": "Analogy", "link_type": "analogy"},
     ]
 
     (tmp_path / "Module.md").write_text("---\n---\n", encoding="utf-8")
-    assert check_parents_exist(str(tmp_path), meta) == ["Concept", "Analogy"]
+    assert check_parents_exist(str(tmp_path), meta) == ["SourceLog", "Concept", "Analogy"]
 
 
 def test_semantics_embedding_helper_is_directly_usable():
@@ -656,6 +768,30 @@ def test_write_file_use_cases_preserve_body_and_index(tmp_path):
         )
         assert (success, error) == (False, "cycle_detected")
         assert not cycle_note.exists()
+
+        derived_note = tmp_path / "derived.md"
+        cycle_checks = []
+
+        async def record_cycle_check(db_path: str, parent_path: str, child_path: str):
+            cycle_checks.append((parent_path, child_path))
+            return True
+
+        success, error = await write_file_with_metadata_use_case(
+            "db.sqlite",
+            tmp_path,
+            derived_note,
+            "Derived",
+            {"parents_meta": [{"entity": "SourceLog", "link_type": "derived_from"}]},
+            sync_parents_fields=sync_parents_fields,
+            resolve_entity_path=lambda db_path, entity: asyncio.sleep(0, result="source-log.md"),
+            check_cycle_exists=record_cycle_check,
+            dump_metadata=dump_metadata,
+            write_text=write_vault_text,
+            index_file=index_file,
+        )
+        assert (success, error) == (True, "")
+        assert derived_note.exists()
+        assert cycle_checks == []
 
         locked = tmp_path / "locked.md"
         locked.write_text("---\ntype: old\n---\nOriginal body", encoding="utf-8")
