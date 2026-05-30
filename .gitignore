@@ -20,6 +20,9 @@ _py_manual_dir/
 config.yaml
 config_local.yaml
 
+# Local agent instructions
+AGENTS.md
+
 # IDE
 .idea/
 .vscode/
