@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.2.6 - released 2026-08-13
+
+### Fixed
+
+- Restricted the MCP Python SDK dependency to `mcp>=1.28,<2`, preventing
+  fresh installs from resolving the incompatible SDK v2 API.
+
+### Verification
+
+- `python -m pytest -q` (42 passed)
+- `python test_server.py` (46 passed)
+- stdio `initialize` + `tools/list` smoke on MCP 1.29.0 (8 tools)
+- wheel/sdist build and Twine metadata checks
+
 ## 3.2.5 - released 2026-05-30
 
 ### Fixed

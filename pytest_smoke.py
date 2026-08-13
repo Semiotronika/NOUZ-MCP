@@ -82,7 +82,7 @@ from nouz_mcp.vectors import center_vector, cosine, mean_center, mean_vector  # 
 
 
 def test_package_server_exposes_server_api():
-    assert __version__ == "3.2.5"
+    assert __version__ == "3.2.6"
     assert server.VERSION == __version__
     assert callable(server.run_server)
     assert callable(server.main)
