@@ -25,7 +25,7 @@ from mcp import types
 from nouz_mcp._version import __version__
 from nouz_mcp.config import (
     DEFAULT_ARTIFACT_KEYWORDS,
-    DEFAULT_ARTIFACT_SIGNS,
+    DEFAULT_ARTIFACT_SIGNS,  # noqa: F401 - preserved as a public server-module export
     DEFAULT_CONFIG,
     load_config as load_nouz_config,
 )

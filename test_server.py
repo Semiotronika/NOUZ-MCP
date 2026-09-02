@@ -7,10 +7,8 @@ Run: python test_server.py
 """
 
 import asyncio
-import json
 import os
 import sys
-import tempfile
 import shutil
 from pathlib import Path
 
@@ -208,7 +206,7 @@ async def test_dump_metadata():
 
     try:
         lines = result.split("\n")
-        keys_in_order = [l.split(":")[0].strip() for l in lines if ":" in l and not l.startswith("-")]
+        keys_in_order = [line.split(":")[0].strip() for line in lines if ":" in line and not line.startswith("-")]
         expected_first = ["type", "level", "sign", "status", "tags", "parents"]
         actual_first = [k for k in keys_in_order if k in expected_first]
         assert actual_first == expected_first, f"Key order wrong: {actual_first}"
