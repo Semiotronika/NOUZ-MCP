@@ -6,8 +6,10 @@
 
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![MCP](https://img.shields.io/badge/protocol-MCP_stdio-lightgrey.svg)](https://modelcontextprotocol.io)
+[![MCP SDK v2](https://img.shields.io/badge/MCP%20SDK-v2-lightgrey.svg)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/badge/pypi-nouz--mcp-orange.svg)](https://pypi.org/project/nouz-mcp/)
+
+NOUZ работает на MCP Python SDK v2.
 
 🇬🇧 [English version](README_EN.md)
 
