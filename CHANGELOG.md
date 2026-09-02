@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Migrated the low-level NOUZ server to MCP Python SDK v2 (`mcp>=2,<3`) and
+  preserved stdio compatibility with the 2025-11-25 handshake protocol.
+- Added explicit JSON Schema tool-input validation, structured tool results,
+  and MCP tool annotations required by the v2 SDK.
+- Added an explicit read-only real-vault smoke runner using an isolated SQLite
+  cache outside the vault.
+
+### Verification
+
+- `python -m pytest -q` (48 passed)
+- `python -m pytest -q pytest_mcp_v2.py` (6 passed)
+- `python test_server.py` (51 passed)
+
 ## 3.2.6 - released 2026-08-13
 
 ### Fixed
