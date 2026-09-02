@@ -2,6 +2,32 @@
 
 from typing import Any, Dict, Iterable, List, Mapping, Set
 
+# Local configurations may name artifact kinds in Russian while the public
+# heuristic uses stable English keys. Resolve local aliases before fallback.
+_ARTIFACT_NAME_ALIASES = {
+    "note": ("\u0437\u0430\u043c\u0435\u0442\u043a\u0430",),
+    "concept": ("\u043f\u043e\u043d\u044f\u0442\u0438\u0435",),
+    "reference": ("\u0440\u0435\u0444\u0435\u0440\u0435\u043d\u0441", "\u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a"),
+    "log": ("\u043b\u043e\u0433",),
+    "update": ("\u043d\u043e\u0432\u043e\u0441\u0442\u044c", "\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435"),
+    "hypothesis": ("\u0433\u0438\u043f\u043e\u0442\u0435\u0437\u0430",),
+    "specification": ("\u0441\u043f\u0435\u0446\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f",),
+}
+
+
+def _mapping_value(name: str, mapping: Mapping[str, Any]) -> Any:
+    """Find a configured artifact value by English or local alias."""
+    candidates = {name.strip().lower().replace("\u0451", "\u0435")}
+    candidates.update(
+        alias.lower().replace("\u0451", "\u0435")
+        for alias in _ARTIFACT_NAME_ALIASES.get(name.strip().lower(), ())
+    )
+    for key, value in mapping.items():
+        normalized = str(key).strip().lower().replace("\u0451", "\u0435")
+        if normalized in candidates:
+            return value
+    return None
+
 
 def extract_artifact_sign_from_sign(sign: str, artifact_signs: Set[str]) -> str:
     """Extract artifact-sign characters from a composite sign."""
@@ -26,11 +52,13 @@ def extract_core_sign_from_sign(sign: str, core_signs: Set[str], artifact_signs:
 
 def artifact_sign(name: str, fallback: str, artifact_sign_by_name: Mapping[str, str]) -> str:
     """Return configured artifact sign by material name, with public ASCII fallback."""
-    key = name.lower()
-    if key in artifact_sign_by_name:
-        return artifact_sign_by_name[key]
-    if key == "update" and "news" in artifact_sign_by_name:
-        return artifact_sign_by_name["news"]
+    value = _mapping_value(name, artifact_sign_by_name)
+    if value is not None:
+        return str(value)
+    if name.strip().lower() == "update":
+        value = _mapping_value("news", artifact_sign_by_name)
+        if value is not None:
+            return str(value)
     return fallback
 
 
@@ -40,12 +68,14 @@ def artifact_keywords(
     default_artifact_keywords: Mapping[str, Iterable[str]],
 ) -> List[str]:
     """Return configured artifact detection keywords, or public RU/EN defaults."""
-    key = name.lower()
-    if key in artifact_keywords_by_name:
-        return list(artifact_keywords_by_name[key])
-    if key == "update" and "news" in artifact_keywords_by_name:
-        return list(artifact_keywords_by_name["news"])
-    return list(default_artifact_keywords.get(key, []))
+    value = _mapping_value(name, artifact_keywords_by_name)
+    if value is not None:
+        return list(value)
+    if name.strip().lower() == "update":
+        value = _mapping_value("news", artifact_keywords_by_name)
+        if value is not None:
+            return list(value)
+    return list(default_artifact_keywords.get(name.lower(), []))
 
 
 def determine_artifact_sign(

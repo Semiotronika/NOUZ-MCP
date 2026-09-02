@@ -4,7 +4,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from mcp import Client, StdioServerParameters
+from mcp import Client
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from nouz_mcp._version import __version__
 
@@ -12,7 +13,7 @@ from nouz_mcp._version import __version__
 REPO_ROOT = Path(__file__).parent
 
 
-def _stdio_server(vault: Path, *, cache_write: bool = False) -> StdioServerParameters:
+def _stdio_server(vault: Path, *, cache_write: bool = False):
     env = os.environ.copy()
     env.update(
         {
@@ -22,12 +23,13 @@ def _stdio_server(vault: Path, *, cache_write: bool = False) -> StdioServerParam
             "EMBED_ENABLED": "false",
         }
     )
-    return StdioServerParameters(
+    params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "nouz_mcp.server"],
         cwd=REPO_ROOT,
         env=env,
     )
+    return stdio_client(params)
 
 
 @pytest.mark.asyncio
