@@ -1041,7 +1041,11 @@ def _tool_error_result(error: str, message: str) -> types.CallToolResult:
     )
 
 
-def _tool_result_from_content(content: list[types.TextContent]) -> types.CallToolResult:
+def _tool_result_from_content(
+    content: list[types.TextContent],
+    *,
+    protocol_version: str | None = None,
+) -> types.CallToolResult:
     """Upgrade the legacy text payload to a v2 structured tool result."""
     if content and isinstance(content[0], types.TextContent):
         text = content[0].text
@@ -1056,9 +1060,14 @@ def _tool_result_from_content(content: list[types.TextContent]) -> types.CallToo
         }
 
     is_error = isinstance(structured, dict) and bool(structured.get("error"))
+    # The 2025-11-25 wire schema only accepts object-shaped structuredContent.
+    # Keep the JSON TextContent fallback for list/scalar results in legacy mode.
+    structured_content = structured
+    if protocol_version == "2025-11-25" and not isinstance(structured, dict):
+        structured_content = None
     return types.CallToolResult(
         content=content,
-        structured_content=structured,
+        structured_content=structured_content,
         is_error=is_error,
     )
 
@@ -1840,9 +1849,15 @@ async def run_server():
 
         # Preserve explicit policy errors for tools hidden by the active mode.
         if READ_ONLY and is_read_only_disabled_tool(params.name):
-            return _tool_result_from_content(await execute_tool(params.name, args))
+            return _tool_result_from_content(
+                await execute_tool(params.name, args),
+                protocol_version=ctx.protocol_version,
+            )
         if is_semantic_mode_tool(params.name) and not RULE["reference_vectors"]:
-            return _tool_result_from_content(await execute_tool(params.name, args))
+            return _tool_result_from_content(
+                await execute_tool(params.name, args),
+                protocol_version=ctx.protocol_version,
+            )
 
         listed = await handle_list_tools(ctx, None)
         tool = next((candidate for candidate in listed.tools if candidate.name == params.name), None)
@@ -1856,7 +1871,10 @@ async def run_server():
                 validation_error["message"],
             )
 
-        return _tool_result_from_content(await execute_tool(params.name, args))
+        return _tool_result_from_content(
+            await execute_tool(params.name, args),
+            protocol_version=ctx.protocol_version,
+        )
 
     server = Server(
         "nouz",

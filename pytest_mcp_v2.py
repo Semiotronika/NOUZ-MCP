@@ -12,13 +12,13 @@ from nouz_mcp._version import __version__
 REPO_ROOT = Path(__file__).parent
 
 
-def _stdio_server(vault: Path) -> StdioServerParameters:
+def _stdio_server(vault: Path, *, cache_write: bool = False) -> StdioServerParameters:
     env = os.environ.copy()
     env.update(
         {
             "OBSIDIAN_ROOT": str(vault),
             "NOUZ_READ_ONLY": "true",
-            "NOUZ_CACHE_WRITE": "false",
+            "NOUZ_CACHE_WRITE": "true" if cache_write else "false",
             "EMBED_ENABLED": "false",
         }
     )
@@ -71,6 +71,31 @@ async def test_stdio_supports_modern_discover_and_legacy_initialize(
         assert isinstance(result.structured_content, dict)
         assert result.structured_content["content"] == "Sample body\n"
         assert json.loads(result.content[0].text) == result.structured_content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expects_structured_content"),
+    [("auto", True), ("legacy", False)],
+)
+async def test_list_results_are_compatible_with_both_mcp_wire_versions(
+    tmp_path: Path,
+    mode: str,
+    expects_structured_content: bool,
+):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "sample.md").write_text("# Sample\n", encoding="utf-8")
+
+    async with Client(_stdio_server(vault, cache_write=True), mode=mode) as client:
+        result = await client.call_tool("list_files", {})
+        assert result.is_error is False
+        text_payload = json.loads(result.content[0].text)
+        assert isinstance(text_payload, list)
+        if expects_structured_content:
+            assert result.structured_content == text_payload
+        else:
+            assert result.structured_content is None
 
 
 @pytest.mark.asyncio
