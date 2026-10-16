@@ -10,7 +10,7 @@ readme = "README_EN.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    {name = "Semiotronika", email = "belkinamariaigorevna@yandex.ru"}
+    {name = "Maria Belkina", email = "belkinamariaigorevna@yandex.ru"}
 ]
 keywords = ["mcp", "obsidian", "knowledge-graph", "semantic-classification", "rag", "llm", "notes", "pkm", "embeddings", "dag"]
 classifiers = [

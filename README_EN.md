@@ -258,7 +258,7 @@ python test_server.py
 - 🗂️ [Glama Registry](https://glama.ai/mcp/servers/Semiotronika/NOUZ-MCP)
 - 🐙 [GitHub](https://github.com/Semiotronika/NOUZ-MCP)
 
-MIT License © 2026 Semiotronika
+MIT License © 2026 Maria Belkina
 
 *Cosines are computed. Syntax changes. Semantics remains.*
 
